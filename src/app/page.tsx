@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import HeroSection from "@/components/landing/HeroSection";
 import FeaturesSection from "@/components/landing/FeaturesSection";
 import WatchDemoModal from "@/components/landing/WatchDemoModal";
@@ -8,9 +10,10 @@ import Sidebar from "@/components/dashboard/Sidebar";
 import Header from "@/components/dashboard/Header";
 import DocGrid, { DocumentItem } from "@/components/dashboard/DocGrid";
 import EditorPreview from "@/components/editor/EditorPreview";
-import { Sparkles, MessageSquare, ArrowRight, ShieldCheck, Database, Zap } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 
 export default function Home() {
+  const router = useRouter();
   const [activeView, setActiveView] = useState<"landing" | "dashboard" | "editor">("landing");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -225,6 +228,7 @@ export default function Home() {
               <a href="#" className="hover:text-crimson transition-colors">Features</a>
               <a href="#" className="hover:text-crimson transition-colors">Security</a>
               <a href="#" className="hover:text-crimson transition-colors">Pricing</a>
+              <Link href="/login" className="hover:text-crimson transition-colors">Sign in</Link>
             </div>
 
             <div className="flex items-center gap-3">
@@ -234,18 +238,18 @@ export default function Home() {
               >
                 Go to Dashboard
               </button>
-              <button 
-                onClick={() => setActiveView("dashboard")}
+              <Link 
+                href="/signup"
                 className="rounded-xl bg-crimson hover:bg-crimson-hover text-white px-4 py-2 text-xs font-bold shadow-md shadow-crimson/15 cursor-pointer"
               >
                 Get Started
-              </button>
+              </Link>
             </div>
           </nav>
 
           {/* Hero */}
           <HeroSection 
-            onGetStarted={() => setActiveView("dashboard")}
+            onGetStarted={() => router.push("/signup")}
             onWatchDemo={() => setWatchDemoOpen(true)}
           />
 
