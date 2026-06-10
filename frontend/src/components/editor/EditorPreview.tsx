@@ -198,6 +198,7 @@ export default function EditorPreview({
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setWsConnected(true);
       // Initiate Sync handshake
       ws.send(JSON.stringify({
@@ -208,6 +209,7 @@ export default function EditorPreview({
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       try {
         const msg = JSON.parse(event.data);
         if (msg.doc_id !== doc.id) return;
@@ -319,10 +321,12 @@ export default function EditorPreview({
     };
 
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
       setWsConnected(false);
     };
 
     ws.onerror = (err) => {
+      if (wsRef.current !== ws) return;
       console.error("WebSocket connection error:", err);
       setWsConnected(false);
     };

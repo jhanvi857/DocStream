@@ -103,6 +103,18 @@ export class CRDTDoc {
   }
 }
 
+// Standard UUID v4 generator
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 // O(N) diffing algorithm using common prefix/suffix matching
 export function diffAndGenerateOps(
   oldDoc: CRDTDoc,
@@ -143,7 +155,7 @@ export function diffAndGenerateOps(
 
     for (const charNode of deletedActiveChars) {
       ops.push({
-        id: `op-${userID}-${Date.now()}-${nextClock()}`,
+        id: generateUUID(),
         doc_id: oldDoc.docID,
         user_id: userID,
         op_type: "delete",
@@ -151,6 +163,7 @@ export function diffAndGenerateOps(
         char: "",
         after_id: "",
         is_deleted: true,
+        created_at: new Date().toISOString()
       });
     }
   }
@@ -169,7 +182,7 @@ export function diffAndGenerateOps(
       const char = insertedText[i];
       const charID = `${userID}:${nextClock()}`;
       ops.push({
-        id: `op-${userID}-${Date.now()}-${nextClock()}`,
+        id: generateUUID(),
         doc_id: oldDoc.docID,
         user_id: userID,
         op_type: "insert",
@@ -177,6 +190,7 @@ export function diffAndGenerateOps(
         char: char,
         after_id: afterID,
         is_deleted: false,
+        created_at: new Date().toISOString()
       });
       // The subsequent characters are chained sequentially
       afterID = charID;
