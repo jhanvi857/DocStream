@@ -28,12 +28,12 @@ func (s *service) PersistOp(ctx context.Context, op *Op) (bool, error) {
 		return false, err
 	}
 
-	_, _, updatedAt, err := s.repo.GetLatestSnapshot(ctx, op.DocID)
+	_, _, snapshotAt, err := s.repo.GetLatestSnapshot(ctx, op.DocID)
 	if err != nil {
 		return false, err
 	}
 
-	count, err := s.repo.GetOpsCountSince(ctx, op.DocID, updatedAt)
+	count, err := s.repo.GetOpsCountSince(ctx, op.DocID, snapshotAt)
 	if err != nil {
 		return false, err
 	}
@@ -43,12 +43,12 @@ func (s *service) PersistOp(ctx context.Context, op *Op) (bool, error) {
 
 // return the current snapshot payload along with all subsequent incremental operations.
 func (s *service) LoadDocumentState(ctx context.Context, docID string) (json.RawMessage, []*Op, int, error) {
-	content, version, updatedAt, err := s.repo.GetLatestSnapshot(ctx, docID)
+	content, version, snapshotAt, err := s.repo.GetLatestSnapshot(ctx, docID)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
-	ops, err := s.repo.GetOpsSince(ctx, docID, updatedAt)
+	ops, err := s.repo.GetOpsSince(ctx, docID, snapshotAt)
 	if err != nil {
 		return nil, nil, 0, err
 	}

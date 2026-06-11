@@ -58,8 +58,8 @@ func (r *postgresRepository) GetOpsSince(ctx context.Context, docID string, sinc
 	query := `
 		SELECT id, doc_id, user_id, op_type, char_id, char, after_id, is_deleted, vector_clock, created_at
 		FROM ops_log
-		WHERE doc_id = $1 AND created_at > $2
-		ORDER BY created_at ASC`
+		WHERE doc_id = $1 AND created_at >= $2
+		ORDER BY created_at ASC, id ASC`
 	rows, err := r.pool.Query(ctx, query, docID, since)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ops: %w", err)
@@ -81,7 +81,7 @@ func (r *postgresRepository) GetOpsSince(ctx context.Context, docID string, sinc
 }
 
 func (r *postgresRepository) GetOpsCountSince(ctx context.Context, docID string, since time.Time) (int, error) {
-	query := `SELECT COUNT(*) FROM ops_log WHERE doc_id = $1 AND created_at > $2`
+	query := `SELECT COUNT(*) FROM ops_log WHERE doc_id = $1 AND created_at >= $2`
 	var count int
 	err := r.pool.QueryRow(ctx, query, docID, since).Scan(&count)
 	if err != nil {
@@ -91,22 +91,22 @@ func (r *postgresRepository) GetOpsCountSince(ctx context.Context, docID string,
 }
 
 func (r *postgresRepository) GetLatestSnapshot(ctx context.Context, docID string) (json.RawMessage, int, time.Time, error) {
-	query := `SELECT content, snapshot_version, updated_at FROM documents WHERE id = $1`
+	query := `SELECT content, snapshot_version, snapshot_at FROM documents WHERE id = $1`
 	var content json.RawMessage
 	var version int
-	var updatedAt time.Time
-	err := r.pool.QueryRow(ctx, query, docID).Scan(&content, &version, &updatedAt)
+	var snapshotAt time.Time
+	err := r.pool.QueryRow(ctx, query, docID).Scan(&content, &version, &snapshotAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, 0, time.Time{}, errors.New("document not found")
 		}
 		return nil, 0, time.Time{}, fmt.Errorf("failed to get snapshot: %w", err)
 	}
-	return content, version, updatedAt, nil
+	return content, version, snapshotAt, nil
 }
 
 func (r *postgresRepository) SaveSnapshot(ctx context.Context, docID string, content json.RawMessage, version int) error {
-	query := `UPDATE documents SET content = $1, snapshot_version = $2, updated_at = $3 WHERE id = $4`
+	query := `UPDATE documents SET content = $1, snapshot_version = $2, snapshot_at = $3, updated_at = $3 WHERE id = $4`
 	_, err := r.pool.Exec(ctx, query, content, version, time.Now(), docID)
 	if err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)
@@ -119,7 +119,7 @@ func (r *postgresRepository) GetOpsAfter(ctx context.Context, docID string, offs
 		SELECT id, doc_id, user_id, op_type, char_id, char, after_id, is_deleted, vector_clock, created_at
 		FROM ops_log
 		WHERE doc_id = $1
-		ORDER BY created_at ASC
+		ORDER BY created_at ASC, id ASC
 		OFFSET $2`
 	rows, err := r.pool.Query(ctx, query, docID, offset)
 	if err != nil {
@@ -157,7 +157,7 @@ func (r *postgresRepository) GetOpsWithUser(ctx context.Context, docID string) (
 		FROM ops_log o
 		JOIN users u ON o.user_id = u.id
 		WHERE o.doc_id = $1
-		ORDER BY o.created_at ASC`
+		ORDER BY o.created_at ASC, o.id ASC`
 	rows, err := r.pool.Query(ctx, query, docID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ops with user details: %w", err)
