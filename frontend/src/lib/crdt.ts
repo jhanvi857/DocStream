@@ -103,6 +103,25 @@ export class CRDTDoc {
   }
 }
 
+// Helper to tokenize an HTML string into individual text characters and HTML tags
+function tokenizeHTML(html: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < html.length) {
+    if (html[i] === '<') {
+      const closeIdx = html.indexOf('>', i);
+      if (closeIdx !== -1) {
+        tokens.push(html.slice(i, closeIdx + 1));
+        i = closeIdx + 1;
+        continue;
+      }
+    }
+    tokens.push(html[i]);
+    i++;
+  }
+  return tokens;
+}
+
 // Standard UUID v4 generator
 function generateUUID(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -115,7 +134,7 @@ function generateUUID(): string {
   });
 }
 
-// O(N) diffing algorithm using common prefix/suffix matching
+// O(N) diffing algorithm using common prefix/suffix matching over tokens
 export function diffAndGenerateOps(
   oldDoc: CRDTDoc,
   oldText: string,
@@ -123,12 +142,15 @@ export function diffAndGenerateOps(
   userID: string,
   nextClock: () => number
 ): Op[] {
+  const oldTokens = oldDoc.getActiveChars().map(c => c.char);
+  const newTokens = tokenizeHTML(newText);
+
   // Find common prefix length
   let prefixLen = 0;
   while (
-    prefixLen < oldText.length &&
-    prefixLen < newText.length &&
-    oldText[prefixLen] === newText[prefixLen]
+    prefixLen < oldTokens.length &&
+    prefixLen < newTokens.length &&
+    oldTokens[prefixLen] === newTokens[prefixLen]
   ) {
     prefixLen++;
   }
@@ -136,20 +158,20 @@ export function diffAndGenerateOps(
   // Find common suffix length
   let suffixLen = 0;
   while (
-    suffixLen < oldText.length - prefixLen &&
-    suffixLen < newText.length - prefixLen &&
-    oldText[oldText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
+    suffixLen < oldTokens.length - prefixLen &&
+    suffixLen < newTokens.length - prefixLen &&
+    oldTokens[oldTokens.length - 1 - suffixLen] === newTokens[newTokens.length - 1 - suffixLen]
   ) {
     suffixLen++;
   }
 
-  const deletedText = oldText.slice(prefixLen, oldText.length - suffixLen);
-  const insertedText = newText.slice(prefixLen, newText.length - suffixLen);
+  const deletedTokens = oldTokens.slice(prefixLen, oldTokens.length - suffixLen);
+  const insertedTokens = newTokens.slice(prefixLen, newTokens.length - suffixLen);
 
   const ops: Op[] = [];
 
   // 1. Generate Delete Operations
-  if (deletedText.length > 0) {
+  if (deletedTokens.length > 0) {
     const activeChars = oldDoc.getActiveChars();
     const deletedActiveChars = activeChars.slice(prefixLen, activeChars.length - suffixLen);
 
@@ -169,17 +191,16 @@ export function diffAndGenerateOps(
   }
 
   // 2. Generate Insert Operations
-  if (insertedText.length > 0) {
+  if (insertedTokens.length > 0) {
     const activeChars = oldDoc.getActiveChars();
-    // The insertion parent is the character node preceding the insert index
     let afterID = "";
     if (prefixLen > 0 && activeChars[prefixLen - 1]) {
       afterID = activeChars[prefixLen - 1].id;
     }
 
-    // Generate insert operation per character
-    for (let i = 0; i < insertedText.length; i++) {
-      const char = insertedText[i];
+    // Generate insert operation per token
+    for (let i = 0; i < insertedTokens.length; i++) {
+      const token = insertedTokens[i];
       const charID = `${userID}:${nextClock()}`;
       ops.push({
         id: generateUUID(),
@@ -187,12 +208,12 @@ export function diffAndGenerateOps(
         user_id: userID,
         op_type: "insert",
         char_id: charID,
-        char: char,
+        char: token,
         after_id: afterID,
         is_deleted: false,
         created_at: new Date().toISOString()
       });
-      // The subsequent characters are chained sequentially
+      // The subsequent tokens are chained sequentially
       afterID = charID;
     }
   }

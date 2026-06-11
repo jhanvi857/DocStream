@@ -1,4 +1,4 @@
-package collab
+package crdt
 
 import (
 	"encoding/json"

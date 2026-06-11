@@ -1,4 +1,4 @@
-package collab
+package crdt
 
 import (
 	"testing"

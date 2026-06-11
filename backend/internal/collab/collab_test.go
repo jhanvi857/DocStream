@@ -10,6 +10,7 @@ import (
 
 	"docstream/internal/auth"
 	"docstream/internal/document"
+	"docstream/internal/crdt"
 	"docstream/internal/version"
 	"docstream/internal/ws"
 
@@ -187,7 +188,7 @@ func TestWebSocket_Collaboration(t *testing.T) {
 	}
 
 	// 6. Client 1 inserts character "a"
-	insertOp1 := Op{
+	insertOp1 := crdt.Op{
 		ID:        "op1",
 		DocID:     "doc1",
 		UserID:    "user-c1",
