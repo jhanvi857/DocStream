@@ -18,6 +18,7 @@ export interface DocumentItem {
   isFavorite: boolean;
   category: "mydocs" | "shared" | "favorites" | "trash";
   content: string;
+  owner_id?: string;
 }
 
 interface DocGridProps {

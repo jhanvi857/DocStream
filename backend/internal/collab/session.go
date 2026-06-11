@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"docstream/internal/crdt"
 	"docstream/internal/version"
 	"docstream/internal/ws"
 )
@@ -16,13 +17,14 @@ import (
 type Session struct {
 	docID           string
 	clients         map[*Client]bool
-	crdtDoc         *CRDTDoc
+	crdtDoc         *crdt.CRDTDoc
 	mu              sync.RWMutex
 	vService        version.Service
 	snapshotVersion int
 	loadedChan      chan struct{}
 	pubSub          *RedisPubSub
 	cancelSub       context.CancelFunc
+	opsChan         chan hubMessage
 
 	// Presence + Cursor tracking (in-memory only)
 	cursors map[string]int // client.id -> cursor index
@@ -33,12 +35,23 @@ func NewSession(docID string, vService version.Service) *Session {
 	return &Session{
 		docID:           docID,
 		clients:         make(map[*Client]bool),
-		crdtDoc:         NewCRDTDoc(),
+		crdtDoc:         crdt.NewCRDTDoc(),
 		vService:        vService,
 		snapshotVersion: 0,
 		loadedChan:      make(chan struct{}),
 		cursors:         make(map[string]int),
+		opsChan:         make(chan hubMessage, 1000),
 	}
+}
+
+// StartWorker spins up the worker goroutine to process operations sequentially.
+func (s *Session) StartWorker(h *Hub) {
+	go func() {
+		<-s.loadedChan
+		for hm := range s.opsChan {
+			h.handleSessionMessage(s, hm)
+		}
+	}()
 }
 
 // subscribe to the Redis pub/sub channel for this document.
@@ -98,7 +111,7 @@ func (s *Session) LoadState(ctx context.Context) error {
 	}
 
 	// 1. Initialize CRDT sequence from snapshot bytes
-	doc, err := FromJSON(content)
+	doc, err := crdt.FromJSON(content)
 	if err != nil {
 		return err
 	}
@@ -107,7 +120,7 @@ func (s *Session) LoadState(ctx context.Context) error {
 
 	// 2. Replay all incremental logs on top of the snapshot
 	for _, op := range ops {
-		collabOp := Op{
+		collabOp := crdt.Op{
 			ID:        op.ID,
 			DocID:     op.DocID,
 			UserID:    op.UserID,
@@ -241,7 +254,7 @@ func (s *Session) HandleSync(ctx context.Context, client *Client, lastSeenClock 
 		}
 
 		for _, op := range ops {
-			collabOp := Op{
+		collabOp := crdt.Op{
 				ID:        op.ID,
 				DocID:     op.DocID,
 				UserID:    op.UserID,
@@ -303,9 +316,14 @@ func (s *Session) Broadcast(msg ws.Message, excludeClient *Client) {
 }
 
 // update the document CRDT structure, persists the change, publishes to Redis Pub/Sub, and broadcasts.
-func (s *Session) ApplyOp(ctx context.Context, op Op, excludeClient *Client) error {
+func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Always override with server-side time to eliminate client clock-drift / timezone bugs
+	// Doing this under the lock ensures strict monotonic ordering and prevents a gap between
+	// the snapshot timestamp and subsequent queued operation timestamps.
+	op.CreatedAt = time.Now()
 
 	// 1. Apply operational changes locally
 	if err := s.crdtDoc.Apply(op); err != nil {
@@ -389,7 +407,7 @@ func (s *Session) ApplyOp(ctx context.Context, op Op, excludeClient *Client) err
 }
 
 // apply an operation from Redis that is already persisted and broadcast to all local clients.
-func (s *Session) ApplyRemoteOp(op Op) error {
+func (s *Session) ApplyRemoteOp(op crdt.Op) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

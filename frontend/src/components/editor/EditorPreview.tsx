@@ -740,7 +740,7 @@ export default function EditorPreview({
             {/* Editor Canvas Container */}
             <div
               ref={editorRef}
-              contentEditable
+              contentEditable={wsConnected}
               suppressContentEditableWarning
               spellCheck
               dir="ltr"

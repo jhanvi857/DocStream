@@ -10,7 +10,7 @@ import Sidebar from "@/components/dashboard/Sidebar";
 import Header from "@/components/dashboard/Header";
 import DocGrid, { DocumentItem } from "@/components/dashboard/DocGrid";
 import EditorPreview from "@/components/editor/EditorPreview";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, Sparkles, ArrowRight, Play } from "lucide-react";
 import { 
   getAccessToken, 
   getUserID, 
@@ -86,7 +86,8 @@ export default function Home() {
           isShared: isShared,
           isFavorite: isFavorite,
           category: isTrash ? "trash" : (isShared ? "shared" : "mydocs"),
-          content: parsedContent
+          content: parsedContent,
+          owner_id: doc.owner_id
         } as DocumentItem;
       });
       
@@ -289,7 +290,7 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-3">
-              <button 
+              {/* <button 
                 onClick={() => {
                   if (isAuthenticated) {
                     setActiveView("dashboard");
@@ -300,7 +301,7 @@ export default function Home() {
                 className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 Go to Dashboard
-              </button>
+              </button> */}
               {!isAuthenticated && (
                 <Link 
                   href="/signup"
@@ -326,6 +327,70 @@ export default function Home() {
 
           {/* Features */}
           <FeaturesSection />
+
+          {/* Bottom CTA Section */}
+          <section className="relative overflow-hidden py-28 sm:py-36 select-none border-t border-slate-800/50">
+            {/* Decorative background grid and gradients */}
+            <div className="absolute inset-0 -z-10 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-size-[4rem_4rem] mask-[radial-gradient(ellipse_60%_50%_at_50%_40%,#000_70%,transparent_100%)] opacity-40" />
+            <div className="absolute -top-24 left-1/4 -z-10 h-96 w-96 rounded-full bg-crimson/15 blur-3xl" />
+            <div className="absolute -bottom-24 right-1/4 -z-10 h-96 w-96 rounded-full bg-crimson/10 blur-3xl" />
+            
+            <div className="mx-auto max-w-4xl px-6 text-center">
+              <div className="inline-flex items-center gap-2 rounded-full bg-crimson/10 border border-crimson/20 px-4 py-1.5 text-xs font-semibold text-crimson-light mb-8">
+                <Sparkles className="h-3.5 w-3.5 text-crimson" />
+                <span className="text-crimson">Next-Generation Workspaces</span>
+              </div>
+              
+              <h2 className="text-3xl font-extrabold tracking-tight text-primary sm:text-4xl lg:text-5xl font-display leading-[1.15] mb-6">
+                Ready to transform the way <br />
+                your team writes and collaborates?
+              </h2>
+              
+              <p className="mx-auto max-w-xl text-sm leading-relaxed text-slate-400 mb-10">
+                Experience lightning-fast document creation, seamless character-level real-time synchronization, and robust domain security. Set up your team space in less than 2 minutes.
+              </p>
+              
+              {/* Buttons */}
+              <div className="flex flex-wrap items-center justify-center gap-4 mb-16">
+                <button
+                  onClick={() => {
+                    if (isAuthenticated) {
+                      setActiveView("dashboard");
+                    } else {
+                      router.push("/signup");
+                    }
+                  }}
+                  className="group relative inline-flex items-center justify-center gap-2 rounded-xl bg-crimson px-7 py-4 text-xs font-bold text-white shadow-xl shadow-crimson/30 hover:bg-crimson-hover hover:scale-[1.02] transition-all duration-200 cursor-pointer"
+                >
+                  <span>Start Collaborating Free</span>
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </button>
+                <button
+                  onClick={() => setWatchDemoOpen(true)}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-crimson px-7 py-4 text-xs font-bold text-crimson hover:bg-crimson hover:text-white hover:scale-[1.02] transition-all duration-200 cursor-pointer"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current text-crimson" />
+                  <span>See How It Works</span>
+                </button>
+              </div>
+              
+              {/* Trust Indicators */}
+              <div className="grid grid-cols-1 gap-8 sm:grid-cols-3 pt-14 border-t border-slate-900/60">
+                <div className="flex flex-col items-center">
+                  <span className="text-3xl font-bold text-white font-display">99.9%</span>
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-2">Uptime SLA Guarantee</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="text-3xl font-bold text-white font-display">&lt; 15ms</span>
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-2">Real-time sync latency</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="text-3xl font-bold text-white font-display">50k+</span>
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-2">Active documents sync</span>
+                </div>
+              </div>
+            </div>
+          </section>
 
           {/* Watch Demo Modal */}
           <WatchDemoModal 

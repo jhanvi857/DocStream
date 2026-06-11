@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
-	"time"
 
+	"docstream/internal/crdt"
 	"docstream/internal/version"
 	"docstream/internal/ws"
 )
@@ -46,8 +46,13 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
-			// Process registration in background to avoid blocking other connections
-			go h.handleRegister(client)
+			// Ensure session is created synchronously in the main loop to avoid race conditions
+			session := h.GetOrCreateSession(client.docID)
+			go func() {
+				// Block until the database loader finishes loading snapshot and ops
+				<-session.loadedChan
+				session.Join(client)
+			}()
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -59,48 +64,37 @@ func (h *Hub) Run() {
 						session.cancelSub()
 					}
 					delete(h.sessions, client.docID)
+					close(session.opsChan)
 					slog.Info("session closed (no active clients)", "docID", client.docID)
 				}
 			}
 			h.mu.Unlock()
 
 		case hm := <-h.operation:
-			// Process message asynchronously
-			go h.handleOperation(hm)
+			h.mu.RLock()
+			session, ok := h.sessions[hm.client.docID]
+			h.mu.RUnlock()
+			if ok {
+				select {
+				case session.opsChan <- hm:
+				default:
+					slog.Warn("session ops channel full; dropping message", "docID", session.docID)
+				}
+			} else {
+				slog.Warn("operation discarded for non-existent session", "docID", hm.client.docID)
+			}
 		}
 	}
 }
 
-func (h *Hub) handleRegister(client *Client) {
-	session := h.GetOrCreateSession(client.docID)
-	// Block until the database loader finishes loading snapshot and ops
-	<-session.loadedChan
-	session.Join(client)
-}
-
-func (h *Hub) handleOperation(hm hubMessage) {
-	h.mu.RLock()
-	session, ok := h.sessions[hm.client.docID]
-	h.mu.RUnlock()
-
-	if !ok {
-		slog.Warn("operation discarded for non-existent session", "docID", hm.client.docID)
-		return
-	}
-
-	// Wait for DB state loading to complete before processing incoming operations
-	<-session.loadedChan
-
+// handleSessionMessage processes a message sequentially for a specific session worker.
+func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 	switch hm.message.Type {
 	case ws.MsgTypeOp:
-		var op Op
+		var op crdt.Op
 		if err := json.Unmarshal(hm.message.Payload, &op); err != nil {
 			slog.Error("failed to unmarshal op payload", "error", err)
 			return
-		}
-
-		if op.CreatedAt.IsZero() {
-			op.CreatedAt = time.Now()
 		}
 
 		if err := session.ApplyOp(context.Background(), op, hm.client); err != nil {
@@ -136,6 +130,9 @@ func (h *Hub) GetOrCreateSession(docID string) *Session {
 		session = NewSession(docID, h.vService)
 		h.sessions[docID] = session
 		slog.Info("session created", "docID", docID)
+
+		// Start sequential worker goroutine for the session
+		session.StartWorker(h)
 
 		// Hydrate session state from Postgres database asynchronously
 		go func() {

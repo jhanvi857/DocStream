@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"docstream/internal/crdt"
 	"docstream/internal/user"
 	"docstream/internal/version"
 
@@ -70,11 +71,77 @@ func (s *service) GetByID(ctx context.Context, id string, userID string) (*Docum
 		return nil, errors.New("forbidden: insufficient permission")
 	}
 
-	return s.docRepo.GetByID(ctx, id)
+	doc, err := s.docRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reconstruct the latest document content by loading the snapshot and replaying ops
+	content, ops, versionNum, err := s.vService.LoadDocumentState(ctx, id)
+	if err == nil {
+		crdtDoc, err := crdt.FromJSON(content)
+		if err == nil {
+			for _, op := range ops {
+				collabOp := crdt.Op{
+					ID:        op.ID,
+					DocID:     op.DocID,
+					UserID:    op.UserID,
+					OpType:    op.OpType,
+					CharID:    op.CharID,
+					Char:      op.Char,
+					AfterID:   op.AfterID,
+					IsDeleted: op.IsDeleted,
+					CreatedAt: op.CreatedAt,
+				}
+				_ = crdtDoc.Apply(collabOp)
+			}
+			reconstructedBytes, err := crdtDoc.ToJSON()
+			if err == nil {
+				doc.Content = reconstructedBytes
+				doc.SnapshotVersion = versionNum
+			}
+		}
+	}
+
+	return doc, nil
 }
 
 func (s *service) List(ctx context.Context, userID string) ([]*Document, error) {
-	return s.docRepo.ListByUserID(ctx, userID)
+	docs, err := s.docRepo.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, doc := range docs {
+		// Reconstruct the latest document content by loading the snapshot and replaying ops
+		content, ops, versionNum, err := s.vService.LoadDocumentState(ctx, doc.ID)
+		if err == nil {
+			crdtDoc, err := crdt.FromJSON(content)
+			if err == nil {
+				for _, op := range ops {
+					collabOp := crdt.Op{
+						ID:        op.ID,
+						DocID:     op.DocID,
+						UserID:    op.UserID,
+						OpType:    op.OpType,
+						CharID:    op.CharID,
+						Char:      op.Char,
+						AfterID:   op.AfterID,
+						IsDeleted: op.IsDeleted,
+						CreatedAt: op.CreatedAt,
+					}
+					_ = crdtDoc.Apply(collabOp)
+				}
+				reconstructedBytes, err := crdtDoc.ToJSON()
+				if err == nil {
+					doc.Content = reconstructedBytes
+					doc.SnapshotVersion = versionNum
+				}
+			}
+		}
+	}
+
+	return docs, nil
 }
 
 func (s *service) UpdateTitle(ctx context.Context, id string, title string, userID string) error {
