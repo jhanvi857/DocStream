@@ -19,6 +19,7 @@ import (
 	"docstream/pkg/db"
 	"docstream/pkg/logger"
 	pkgMiddleware "docstream/pkg/middleware"
+	"docstream/pkg/telemetry"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -32,6 +33,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Initialize OpenTelemetry
+	otelShutdown, err := telemetry.InitTelemetry(context.Background(), cfg.ServiceName, cfg.Env, cfg.OtelEndpoint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize OpenTelemetry: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to shutdown OpenTelemetry: %v\n", err)
+		}
+	}()
 
 	// Initialize slog JSON logger
 	logger.Setup(cfg.Env)
@@ -103,6 +118,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Default middlewares
+	r.Use(pkgMiddleware.OTelMiddleware(cfg.ServiceName))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
