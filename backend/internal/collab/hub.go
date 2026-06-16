@@ -15,6 +15,7 @@ import (
 type hubMessage struct {
 	client  *Client
 	message ws.Message
+	ctx     context.Context
 }
 
 // manage active document sessions and routes real-time communications.
@@ -97,7 +98,7 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 			return
 		}
 
-		if err := session.ApplyOp(context.Background(), op, hm.client); err != nil {
+		if err := session.ApplyOp(hm.ctx, op, hm.client); err != nil {
 			slog.Error("failed to apply CRDT operation", "error", err, "docID", session.docID)
 		}
 
@@ -107,7 +108,7 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 			slog.Error("failed to unmarshal cursor payload", "error", err)
 			return
 		}
-		session.HandleCursor(hm.client, payload.Position)
+		session.HandleCursor(hm.ctx, hm.client, payload.Position)
 
 	case ws.MsgTypeSync:
 		var payload ws.SyncPayload
@@ -115,7 +116,7 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 			slog.Error("failed to unmarshal sync payload", "error", err)
 			return
 		}
-		session.HandleSync(context.Background(), hm.client, payload.LastSeenClock)
+		session.HandleSync(hm.ctx, hm.client, payload.LastSeenClock)
 	}
 }
 

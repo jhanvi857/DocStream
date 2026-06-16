@@ -11,6 +11,10 @@ import (
 	"docstream/internal/crdt"
 	"docstream/internal/version"
 	"docstream/internal/ws"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // coordinate real-time sync and presence for a single active document.
@@ -92,7 +96,7 @@ func (s *Session) StartSubscriber(ctx context.Context, rps *RedisPubSub) {
 				}
 
 				// Apply operations received from other server instances
-				if err := s.ApplyRemoteOp(rmsg.Op); err != nil {
+				if err := s.ApplyRemoteOp(subCtx, rmsg.Op); err != nil {
 					slog.Error("failed to apply remote operation", "error", err, "docID", s.docID)
 				}
 			}
@@ -197,7 +201,15 @@ func (s *Session) Leave(client *Client) {
 }
 
 // update a client's cursor position and broadcasts it to session peers.
-func (s *Session) HandleCursor(client *Client, position int) {
+func (s *Session) HandleCursor(ctx context.Context, client *Client, position int) {
+	ctx, span := otel.Tracer("session").Start(ctx, "session.HandleCursor",
+		trace.WithAttributes(
+			attribute.String("userID", client.userID),
+			attribute.Int("position", position),
+		),
+	)
+	defer span.End()
+
 	s.mu.Lock()
 	s.cursors[client.id] = position
 	s.mu.Unlock()
@@ -219,6 +231,14 @@ func (s *Session) HandleCursor(client *Client, position int) {
 
 // execute the synchronization protocol for connecting and reconnecting clients.
 func (s *Session) HandleSync(ctx context.Context, client *Client, lastSeenClock int) {
+	ctx, span := otel.Tracer("session").Start(ctx, "session.HandleSync",
+		trace.WithAttributes(
+			attribute.String("userID", client.userID),
+			attribute.Int("lastSeenClock", lastSeenClock),
+		),
+	)
+	defer span.End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -317,6 +337,15 @@ func (s *Session) Broadcast(msg ws.Message, excludeClient *Client) {
 
 // update the document CRDT structure, persists the change, publishes to Redis Pub/Sub, and broadcasts.
 func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client) error {
+	ctx, span := otel.Tracer("session").Start(ctx, "session.ApplyOp",
+		trace.WithAttributes(
+			attribute.String("userID", op.UserID),
+			attribute.String("opType", op.OpType),
+			attribute.String("charID", op.CharID),
+		),
+	)
+	defer span.End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -327,6 +356,7 @@ func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client
 
 	// 1. Apply operational changes locally
 	if err := s.crdtDoc.Apply(op); err != nil {
+		span.RecordError(err)
 		return err
 	}
 
@@ -347,13 +377,14 @@ func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client
 
 	shouldSnapshot, err := s.vService.PersistOp(ctx, dbOp)
 	if err != nil {
+		span.RecordError(err)
 		slog.Error("failed to persist operation in DB", "error", err, "docID", s.docID)
 	}
 
 	// 3. Publish operation to Redis Pub/Sub channel for multi-instance fan-out
 	if s.pubSub != nil {
 		go func() {
-			pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			if err := s.pubSub.PublishOp(pubCtx, s.docID, op); err != nil {
 				slog.Error("failed to publish operation to Redis Pub/Sub", "error", err, "docID", s.docID)
@@ -407,18 +438,29 @@ func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client
 }
 
 // apply an operation from Redis that is already persisted and broadcast to all local clients.
-func (s *Session) ApplyRemoteOp(op crdt.Op) error {
+func (s *Session) ApplyRemoteOp(ctx context.Context, op crdt.Op) error {
+	ctx, span := otel.Tracer("session").Start(ctx, "session.ApplyRemoteOp",
+		trace.WithAttributes(
+			attribute.String("userID", op.UserID),
+			attribute.String("opType", op.OpType),
+			attribute.String("charID", op.CharID),
+		),
+	)
+	defer span.End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// 1. Apply CRDT changes locally in memory
 	if err := s.crdtDoc.Apply(op); err != nil {
+		span.RecordError(err)
 		return err
 	}
 
 	// 2. Format operation message for fan-out
 	payload, err := json.Marshal(op)
 	if err != nil {
+		span.RecordError(err)
 		return err
 	}
 

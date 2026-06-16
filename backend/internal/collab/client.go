@@ -80,6 +80,7 @@ func (c *Client) ReadPump(ctx context.Context) {
 			c.hub.operation <- hubMessage{
 				client:  c,
 				message: msg,
+				ctx:     ctx,
 			}
 		}
 	}
