@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"docstream/pkg/telemetry"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +31,9 @@ func ConnectPostgres(ctx context.Context, connStr string) (*PostgresDB, error) {
 	config.MinConns = 5
 	config.MaxConnIdleTime = 30 * time.Minute
 	config.MaxConnLifetime = 1 * time.Hour
+
+	// Register OpenTelemetry query tracer
+	config.ConnConfig.Tracer = telemetry.NewPGXTracer()
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

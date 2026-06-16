@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -19,6 +20,12 @@ func ConnectRedis(ctx context.Context, url string) (*RedisClient, error) {
 	}
 
 	client := redis.NewClient(opts)
+
+	// Instrument with OpenTelemetry
+	if err := redisotel.InstrumentTracing(client); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("failed to instrument redis client: %w", err)
+	}
 
 	// whether Redis is responsive or not.
 	if err := client.Ping(ctx).Err(); err != nil {
