@@ -15,6 +15,8 @@ type Config struct {
 	JWTSecret        string
 	JWTRefreshSecret string
 	AllowedOrigin    string
+	OtelEndpoint     string
+	ServiceName      string
 }
 
 func Load() (*Config, error) {
@@ -27,6 +29,8 @@ func Load() (*Config, error) {
 	jwtSec := os.Getenv("JWT_SECRET")
 	jwtRefSec := os.Getenv("JWT_REFRESH_SECRET")
 	allowedOrigin := getEnv("ALLOWED_ORIGIN", "*")
+	otelEndpoint := getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	serviceName := getEnv("OTEL_SERVICE_NAME", "docstream")
 
 	// Validate required variables
 	if dbURL == "" {
@@ -47,6 +51,8 @@ func Load() (*Config, error) {
 		JWTSecret:        jwtSec,
 		JWTRefreshSecret: jwtRefSec,
 		AllowedOrigin:    allowedOrigin,
+		OtelEndpoint:     otelEndpoint,
+		ServiceName:      serviceName,
 	}, nil
 }
 
