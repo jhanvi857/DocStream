@@ -20,6 +20,7 @@ type Repository interface {
 	AddPermission(ctx context.Context, docID string, userID string, role Role) error
 	GetPermission(ctx context.Context, docID string, userID string) (Role, error)
 	GetCollaborators(ctx context.Context, docID string) ([]*Collaborator, error)
+	HasAccessToDocs(ctx context.Context, userID string, docIDs []string) (map[string]bool, error)
 }
 
 type postgresRepository struct {
@@ -168,4 +169,29 @@ func (r *postgresRepository) GetCollaborators(ctx context.Context, docID string)
 		collaborators = append(collaborators, &c)
 	}
 	return collaborators, nil
+}
+
+func (r *postgresRepository) HasAccessToDocs(ctx context.Context, userID string, docIDs []string) (map[string]bool, error) {
+	if len(docIDs) == 0 {
+		return make(map[string]bool), nil
+	}
+	query := `
+		SELECT doc_id 
+		FROM document_permissions 
+		WHERE user_id = $1 AND doc_id = ANY($2)`
+	rows, err := r.pool.Query(ctx, query, userID, docIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check document permissions: %w", err)
+	}
+	defer rows.Close()
+
+	allowed := make(map[string]bool)
+	for rows.Next() {
+		var docID string
+		if err := rows.Scan(&docID); err != nil {
+			return nil, err
+		}
+		allowed[docID] = true
+	}
+	return allowed, nil
 }

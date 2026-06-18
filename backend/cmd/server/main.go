@@ -13,6 +13,7 @@ import (
 	"docstream/internal/auth"
 	"docstream/internal/collab"
 	"docstream/internal/document"
+	"docstream/internal/typeahead"
 	"docstream/internal/user"
 	"docstream/internal/version"
 	"docstream/pkg/config"
@@ -96,9 +97,41 @@ func main() {
 
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTRefreshSecret)
 
+	// Initialize loader callback for typeahead mentions (avoids circular imports)
+	loader := func(ctx context.Context, docID string) ([]string, error) {
+		collabs, err := docRepo.GetCollaborators(ctx, docID)
+		if err != nil {
+			return nil, err
+		}
+		emails := make([]string, len(collabs))
+		for i, c := range collabs {
+			emails[i] = c.Email
+		}
+		return emails, nil
+	}
+
+	// Initialize Typeahead/Autocomplete service
+	typeaheadService, err := typeahead.NewService("./data/typeahead", loader)
+	if err != nil {
+		slog.Error("failed to initialize typeahead service", "error", err)
+		os.Exit(1)
+	}
+
 	authService := auth.NewService(userRepo, tokenManager)
 	versionService := version.NewService(versionRepo)
-	docService := document.NewService(docRepo, userRepo, versionService)
+	docService := document.NewService(
+		docRepo,
+		userRepo,
+		versionService,
+		// onCreate hook (index doc titles)
+		func(docID string, title string) {
+			typeaheadService.InsertTitle(docID, title)
+		},
+		// onShare hook (index new collaborator email)
+		func(ctx context.Context, docID string, email string) {
+			_ = typeaheadService.InsertCollaborator(ctx, docID, email)
+		},
+	)
 
 	// Setup Redis Pub/Sub for multi-instance scaling
 	pubSub := collab.NewRedisPubSub(redisClient.Client, instanceID)
@@ -110,6 +143,7 @@ func main() {
 	authHandler := auth.NewHandler(authService)
 	docHandler := document.NewHandler(docService)
 	wsHandler := collab.NewHandler(hub, docService, tokenManager)
+	typeaheadHandler := typeahead.NewHandler(typeaheadService, docService)
 
 	// Initialize rate limiter (100 requests per 1 minute)
 	rateLimiter := pkgMiddleware.NewRateLimiter(100, 1*time.Minute)
@@ -170,6 +204,11 @@ func main() {
 		r.Delete("/documents/{id}", docHandler.Delete)
 		r.Post("/documents/{id}/share", docHandler.Share)
 		r.Get("/documents/{id}/history", docHandler.History)
+
+		// Typeahead/Autocomplete routes
+		r.Get("/suggest/titles", typeaheadHandler.SuggestTitles)
+		r.Get("/documents/{id}/mentions/suggest", typeaheadHandler.SuggestMentions)
+		r.Post("/documents/{id}/mentions/select", typeaheadHandler.SelectMention)
 	})
 
 	// WebSocket upgrade endpoint (validates token inside query parameters)
@@ -205,6 +244,12 @@ func main() {
 	// Shut down HTTP server first to stop receiving new requests
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server forced to shutdown", "error", err)
+	}
+
+	// Close typeahead service to flush WAL/snapshot to disk
+	slog.Info("closing typeahead service...")
+	if err := typeaheadService.Close(); err != nil {
+		slog.Error("failed to close typeahead service gracefully", "error", err)
 	}
 
 	slog.Info("server exited gracefully")

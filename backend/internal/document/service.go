@@ -24,20 +24,31 @@ type Service interface {
 	VerifyPermission(ctx context.Context, docID string, userID string, minRole Role) (bool, error)
 	GetCollaborators(ctx context.Context, id string, userID string) ([]*Collaborator, error)
 	History(ctx context.Context, docID string, userID string, from int, limit int) ([]*HistoryOp, error)
+	HasAccessToDocs(ctx context.Context, userID string, docIDs []string) (map[string]bool, error)
 }
 
 type service struct {
 	docRepo  Repository
 	userRepo user.Repository
 	vService version.Service
+	onCreate func(docID string, title string)
+	onShare  func(ctx context.Context, docID string, email string)
 }
 
 // NewService instantiates a new document service.
-func NewService(docRepo Repository, userRepo user.Repository, vService version.Service) Service {
+func NewService(
+	docRepo Repository,
+	userRepo user.Repository,
+	vService version.Service,
+	onCreate func(docID string, title string),
+	onShare func(ctx context.Context, docID string, email string),
+) Service {
 	return &service{
 		docRepo:  docRepo,
 		userRepo: userRepo,
 		vService: vService,
+		onCreate: onCreate,
+		onShare:  onShare,
 	}
 }
 
@@ -59,6 +70,11 @@ func (s *service) Create(ctx context.Context, title string, ownerID string) (*Do
 	if err := s.docRepo.Create(ctx, doc); err != nil {
 		return nil, err
 	}
+
+	if s.onCreate != nil {
+		s.onCreate(doc.ID, title)
+	}
+
 	return doc, nil
 }
 
@@ -190,7 +206,15 @@ func (s *service) Share(ctx context.Context, id string, colEmail string, role Ro
 		return fmt.Errorf("user with email %s not found: %w", colEmail, err)
 	}
 
-	return s.docRepo.AddPermission(ctx, id, targetUser.ID, role)
+	if err := s.docRepo.AddPermission(ctx, id, targetUser.ID, role); err != nil {
+		return err
+	}
+
+	if s.onShare != nil {
+		s.onShare(ctx, id, colEmail)
+	}
+
+	return nil
 }
 
 func (s *service) GetCollaborators(ctx context.Context, id string, userID string) ([]*Collaborator, error) {
@@ -203,6 +227,10 @@ func (s *service) GetCollaborators(ctx context.Context, id string, userID string
 	}
 
 	return s.docRepo.GetCollaborators(ctx, id)
+}
+
+func (s *service) HasAccessToDocs(ctx context.Context, userID string, docIDs []string) (map[string]bool, error) {
+	return s.docRepo.HasAccessToDocs(ctx, userID, docIDs)
 }
 
 func (s *service) VerifyPermission(ctx context.Context, docID string, userID string, minRole Role) (bool, error) {
