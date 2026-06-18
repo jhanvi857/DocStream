@@ -11,20 +11,28 @@ DocStream uses a distributed architecture designed to coordinate concurrent clie
 ```mermaid
 flowchart TD
     Client1[Next.js Client 1] <-->|WebSocket| Node1[Go Backend Node 1]
-    Client2[Next.js Client 2] <-->|WebSocket| Node2[Go Backend Node 2]
+    Client1 <-->|HTTP REST| Node1
     
     Node1 <-->|Redis Pub/Sub| RedisBroker[(Redis Pub/Sub)]
-    Node2 <-->|Redis Pub/Sub| RedisBroker
-    
     Node1 -->|Connection Pool| DB[(PostgreSQL)]
-    Node2 -->|Connection Pool| DB
     
     subgraph Go Backend Node
-        Handler[ServeWS Handler] --> Hub[Collab Hub]
+        WS[ServeWS Handler] --> Hub[Collab Hub]
         Hub --> Session[Document Session]
         Session --> CRDT[RGA CRDT Engine]
         Session --> Version[Version Service]
         Version --> DB
+        
+        Router[HTTP Router] --> DocHandler[Doc Handler]
+        Router --> TypeaheadHandler[Typeahead Handler]
+        
+        DocHandler --> DocService[Document Service]
+        TypeaheadHandler --> TypeaheadService[Typeahead Service]
+        
+        DocService -->|Hooks: OnCreate/OnShare| TypeaheadService
+        TypeaheadService -->|Lazy Load Collabs| DB
+        TypeaheadService -->|Persist Snapshot/WAL| Disk[(Local Disk)]
+        DocService --> DB
     end
 ```
 
@@ -155,6 +163,40 @@ DocStream tracks collaborative session states strictly in-memory:
 
 ---
 
+## Typeahead & Autocomplete Engine
+
+DocStream incorporates an in-process, high-performance **Typeahead/Autocomplete Engine** directly integrated into the backend core (eliminating any microservice/gRPC overhead). It supports prefix matching, fuzzy typo-tolerance, write-ahead durability, and strict permission-based security.
+
+### 1. Engine Core (`pkg/trie` & `pkg/persistence`)
+* **Trie Structure**: Handles UTF-8 weighted prefix matches, using a `sync.RWMutex` to allow concurrent, non-blocking reads (`Suggest`/`FuzzySuggest`) while serializing writes (`Insert`/`Select`).
+* **LRU Eviction & Pruning**: Memory is strictly bounded. When the `maxWords` limit is reached, the least recently selected words are evicted, and empty/orphaned nodes are pruned recursively up the tree.
+* **Fuzzy Matching**: Implements typo-tolerance for edit distance 1 (substitutions, insertions, deletions, and transpositions) via recursive subtree traversal.
+* **Write-Ahead Log (WAL) & Snapshotting**: Mutating operations are appended to a WAL log and synced to disk. When the write count reaches a threshold or a periodic interval (e.g., 5 minutes) expires, the Trie states are exported in LRU order and saved as an atomic JSON snapshot, truncating the WAL.
+
+### 2. Dual-Index Architecture
+DocStream runs two completely independent Trie + PersistenceManager pairs with distinct growth budgets:
+
+#### A. Global Document Titles Index
+* **Purpose**: Allows users to quickly autocomplete document titles.
+* **Storage**: Document titles are stored in the global Trie formatted as `<title>|<doc_id>`.
+* **Access Control (Paginating-before-Filtering prevention)**: To prevent info leaks where users discover titles of documents they cannot access, title queries run an **Adaptive Search Loop**. The handler queries the Trie for candidates, parses the `doc_id`, runs a single bulk SQL check (`docRepo.HasAccessToDocs`) against document permissions, and filters out unauthorized entries. If the allowed results fall short of the requested limit, the loop adaptively queries larger candidate pools from the Trie (doubling up to `1000`) before final response framing.
+
+#### B. Per-Document Collaborator Mentions Index
+* **Purpose**: Scopes `@-mention` autocomplete list to collaborators of the active document, ranked by local selection frequency.
+* **Lazy Loading**: Instead of performing full user table scans at boot, the mention Trie is loaded lazily when the document is first opened/edited (loading collaborators from the DB and recovering frequency counts from `data/typeahead/mentions/{docID}_*`).
+* **Concurrence & Janitor Unload**: A background janitor periodically (e.g., every 10 minutes) unloads inactive mention Tries after 30 minutes of idle time. To prevent TOCTOU race conditions:
+  * Evicted Tries are marked as `Closing`.
+  * Concurrent client requests checking the cache will detect the `Closing` state, release global locks, wait on a synchronization channel (`<-mt.Closed`), and then reload cleanly.
+  * The janitor calls `PM.Close()` to flush any un-checkpointed selections to disk before deleting map references and closing the channel.
+  
+### 3. Fault-Tolerant Async Writes
+All typeahead mutation hooks (such as indexing new titles on creation or registering selections) are executed asynchronously in background goroutines:
+* Wraps insertions in a bounded retry loop (3 attempts with exponential backoff).
+* Logs warnings on intermediate failures and errors on permanent failures.
+* Increments a thread-safe atomic counter `failedWrites` for observability.
+
+---
+
 ## Production Hardening & Security
 
 - **Token Bucket Rate Limiting**: The server uses a custom thread-safe token bucket middleware, limiting clients to **100 requests per minute per IP address**.
@@ -173,8 +215,8 @@ DocStream/
 ├── .gitignore              # Global git ignore filters
 ├── backend/                # Go collaborative backend application
 │   ├── cmd/server/         # main.go startup entrypoint
-│   ├── internal/           # Decoupled application modules (auth, document, collab, version, user)
-│   ├── pkg/                # Generic utility packages (db, config, logger, errors, middleware)
+│   ├── internal/           # Decoupled application modules (auth, document, collab, version, user, typeahead)
+│   ├── pkg/                # Generic utility packages (db, config, logger, errors, middleware, trie, persistence)
 │   ├── migrations/         # SQL migration scripts
 │   ├── docker/             # Local infrastructure (docker-compose postgres/redis)
 │   └── Makefile            # Run, test, and migration scripts
