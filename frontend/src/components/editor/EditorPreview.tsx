@@ -6,8 +6,9 @@ import {
   MessageSquare, Star, Lock, Globe, CheckCircle, Clock, Users, ShieldAlert
 } from "lucide-react";
 import { DocumentItem } from "../dashboard/DocGrid";
-import { WS_BASE_URL, getAccessToken, getUserID, getEmail, getDocumentHistory, HistoryOp } from "@/lib/api";
+import { WS_BASE_URL, getAccessToken, getUserID, getEmail, getDocumentHistory, getDocument, Document, HistoryOp } from "@/lib/api";
 import { CRDTDoc, diffAndGenerateOps, Op, CRDTChar } from "@/lib/crdt";
+import ShareModal from "./ShareModal";
 
 interface Comment {
   id: string;
@@ -47,6 +48,32 @@ export default function EditorPreview({
 
   // UI States
   const [title, setTitle] = useState(doc.title);
+  const [fullDoc, setFullDoc] = useState<Document | null>(null);
+  const [userRole, setUserRole] = useState<"owner" | "editor" | "viewer">("viewer");
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  useEffect(() => {
+    if (!doc.id) return;
+    const fetchDocDetails = async () => {
+      try {
+        const details = await getDocument(doc.id);
+        setFullDoc(details);
+        if (details.user_role) {
+          setUserRole(details.user_role as "owner" | "editor" | "viewer");
+        } else {
+          const currentUserID = getUserID();
+          if (currentUserID && details.owner_id === currentUserID) {
+            setUserRole("owner");
+          } else {
+            setUserRole("viewer");
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load document details", err);
+      }
+    };
+    fetchDocDetails();
+  }, [doc.id]);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
   const [comments, setComments] = useState<Comment[]>([]);
   const [newCommentText, setNewCommentText] = useState("");
@@ -182,7 +209,7 @@ export default function EditorPreview({
     const currentUserID = getUserID();
     userIDRef.current = currentUserID || "";
 
-    if (!token || !doc.id) return;
+    if (!doc.id) return;
 
     // Load persistent comments from localStorage
     const savedComments = localStorage.getItem(`docstream_comments_${doc.id}`);
@@ -193,7 +220,7 @@ export default function EditorPreview({
     }
 
     // Connect WebSocket
-    const wsUrl = `${WS_BASE_URL}/ws/document/${doc.id}?token=${token}`;
+    const wsUrl = `${WS_BASE_URL}/ws/document/${doc.id}${token ? "?token=" + token : ""}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -232,6 +259,10 @@ export default function EditorPreview({
           case "sync_complete": {
             // Handshake completed, server clock set
             setSaveStatus("saved");
+            const payload = msg.payload || {};
+            if (payload.user_id) {
+              userIDRef.current = payload.user_id;
+            }
             break;
           }
 
@@ -572,7 +603,7 @@ export default function EditorPreview({
 
           {/* Share Button Toggle */}
           <button
-            onClick={(e) => onToggleShared(doc.id, e)}
+            onClick={() => setShowShareModal(true)}
             className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold border transition-all cursor-pointer ${
               doc.isShared 
                 ? "bg-crimson-light text-crimson border-crimson/20 hover:bg-crimson-light/80"
@@ -676,7 +707,7 @@ export default function EditorPreview({
         {/* PANEL 2: Center Editor Canvas */}
         <main className="flex-1 overflow-y-auto px-4 md:px-8 py-8 flex flex-col items-center">
           {/* Format Control Bar floating above sheet */}
-          <div className="flex items-center gap-1 bg-white border border-slate-150 rounded-xl px-2 py-1.5 shadow-md shadow-slate-100 mb-6 sticky top-0 z-10 w-full max-w-2xl select-none">
+          <div className={`flex items-center gap-1 bg-white border border-slate-150 rounded-xl px-2 py-1.5 shadow-md shadow-slate-100 mb-6 sticky top-0 z-10 w-full max-w-2xl select-none ${userRole === "viewer" ? "pointer-events-none opacity-50" : ""}`}>
             <button 
               onClick={() => applyFormat("bold")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
@@ -740,7 +771,7 @@ export default function EditorPreview({
             {/* Editor Canvas Container */}
             <div
               ref={editorRef}
-              contentEditable={wsConnected}
+              contentEditable={wsConnected && userRole !== "viewer"}
               suppressContentEditableWarning
               spellCheck
               dir="ltr"
@@ -890,6 +921,16 @@ export default function EditorPreview({
         </aside>
       </div>
 
+      {showShareModal && fullDoc && (
+        <ShareModal
+          document={fullDoc}
+          onClose={() => setShowShareModal(false)}
+          onUpdateDocument={(updated) => {
+            setFullDoc(updated);
+            doc.isShared = updated.public_sharing_enabled;
+          }}
+        />
+      )}
     </div>
   );
 }

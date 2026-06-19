@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"docstream/internal/crdt"
+	"docstream/internal/document"
 	"docstream/internal/version"
 	"docstream/internal/ws"
 )
@@ -95,6 +96,11 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 		var op crdt.Op
 		if err := json.Unmarshal(hm.message.Payload, &op); err != nil {
 			slog.Error("failed to unmarshal op payload", "error", err)
+			return
+		}
+
+		if hm.client.role != document.RoleEditor && hm.client.role != document.RoleOwner {
+			slog.Warn("discarding operation from read-only client", "userID", hm.client.userID, "docID", session.docID, "role", hm.client.role)
 			return
 		}
 

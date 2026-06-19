@@ -1,0 +1,2 @@
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS public_sharing_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS public_sharing_role VARCHAR(20) NOT NULL DEFAULT 'viewer';

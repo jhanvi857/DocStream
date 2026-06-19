@@ -301,6 +301,7 @@ func (s *Session) HandleSync(ctx context.Context, client *Client, lastSeenClock 
 	// 2. Transmit sync completion marker with server sequence version
 	completePayload, _ := json.Marshal(ws.SyncCompletePayload{
 		ServerClock: totalOps,
+		UserID:      client.userID,
 	})
 	client.send <- ws.Message{
 		Type:    ws.MsgTypeSyncComplete,

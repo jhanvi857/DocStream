@@ -46,5 +46,6 @@ type SyncPayload struct {
 
 // signal the completion of sync updates with the server's current offset.
 type SyncCompletePayload struct {
-	ServerClock int `json:"serverClock"`
+	ServerClock int    `json:"serverClock"`
+	UserID      string `json:"user_id,omitempty"`
 }
