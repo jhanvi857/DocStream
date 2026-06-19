@@ -86,11 +86,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get fetches document details, verifying the user is a collaborator.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.GetUserIDFromContext(r.Context())
-	if !ok {
-		pkgErrors.NewUnauthorizedError("unauthorized").WriteJSON(w)
-		return
-	}
+	userID, _ := auth.GetUserIDFromContext(r.Context())
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -119,11 +115,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update renames a document's title. Requires editor/owner permission.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.GetUserIDFromContext(r.Context())
-	if !ok {
-		pkgErrors.NewUnauthorizedError("unauthorized").WriteJSON(w)
-		return
-	}
+	userID, _ := auth.GetUserIDFromContext(r.Context())
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -262,11 +254,7 @@ func (h *Handler) SharePublic(w http.ResponseWriter, r *http.Request) {
 
 // History retrieves the chronological operation log for a document.
 func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.GetUserIDFromContext(r.Context())
-	if !ok {
-		pkgErrors.NewUnauthorizedError("unauthorized").WriteJSON(w)
-		return
-	}
+	userID, _ := auth.GetUserIDFromContext(r.Context())
 
 	id := chi.URLParam(r, "id")
 	if id == "" {

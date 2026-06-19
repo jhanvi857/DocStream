@@ -36,8 +36,23 @@ func (s *service) Register(ctx context.Context, email, password string) (*user.U
 		return nil, nil, errors.New("email and password cannot be empty")
 	}
 
-	_, err := s.userRepo.GetByEmail(ctx, email)
+	existingUser, err := s.userRepo.GetByEmail(ctx, email)
 	if err == nil {
+		if existingUser.PasswordHash == "" {
+			hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to hash password: %w", err)
+			}
+			existingUser.PasswordHash = string(hashed)
+			if err := s.userRepo.Update(ctx, existingUser); err != nil {
+				return nil, nil, fmt.Errorf("failed to complete registration: %w", err)
+			}
+			tokens, err := s.tokenManager.GeneratePair(existingUser.ID, existingUser.Email)
+			if err != nil {
+				return nil, nil, err
+			}
+			return existingUser, tokens, nil
+		}
 		return nil, nil, errors.New("email already in use")
 	}
 

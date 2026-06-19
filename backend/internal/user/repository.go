@@ -14,6 +14,7 @@ type Repository interface {
 	Create(ctx context.Context, u *User) error
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetByID(ctx context.Context, id string) (*User, error)
+	Update(ctx context.Context, u *User) error
 }
 
 type postgresRepository struct {
@@ -58,4 +59,13 @@ func (r *postgresRepository) GetByID(ctx context.Context, id string) (*User, err
 		return nil, fmt.Errorf("failed to get user by ID: %w", err)
 	}
 	return &u, nil
+}
+
+func (r *postgresRepository) Update(ctx context.Context, u *User) error {
+	query := `UPDATE users SET email = $1, password_hash = $2 WHERE id = $3`
+	_, err := r.pool.Exec(ctx, query, u.Email, u.PasswordHash, u.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	return nil
 }
