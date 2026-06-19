@@ -60,7 +60,7 @@ export default function Home() {
         try {
           const { getDocument } = await import("@/lib/api");
           const docData = await getDocument(docId);
-          const docItem = {
+          const docItem: DocumentItem = {
             id: docData.id,
             title: docData.title,
             lastEdited: new Date(docData.updated_at).toLocaleDateString() + " " + new Date(docData.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
