@@ -42,9 +42,9 @@ func (r *postgresRepository) Create(ctx context.Context, doc *Document) error {
 	}()
 
 	docQuery := `
-		INSERT INTO documents (id, title, content, owner_id, snapshot_version, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err = tx.Exec(ctx, docQuery, doc.ID, doc.Title, doc.Content, doc.OwnerID, doc.SnapshotVersion, doc.CreatedAt, doc.UpdatedAt)
+		INSERT INTO documents (id, title, content, owner_id, snapshot_version, snapshot_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	_, err = tx.Exec(ctx, docQuery, doc.ID, doc.Title, doc.Content, doc.OwnerID, doc.SnapshotVersion, doc.CreatedAt, doc.CreatedAt, doc.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert document: %w", err)
 	}

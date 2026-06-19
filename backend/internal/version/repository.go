@@ -55,12 +55,16 @@ func (r *postgresRepository) SaveOp(ctx context.Context, op *Op) error {
 }
 
 func (r *postgresRepository) GetOpsSince(ctx context.Context, docID string, since time.Time) ([]*Op, error) {
+	// Add a safety buffer of 5 minutes to account for clock skew/drift between
+	// multiple server instances and the database in deployment.
+	// Since CRDT operations are idempotent, applying already-applied operations is safe.
+	adjustedSince := since.Add(-5 * time.Minute)
 	query := `
 		SELECT id, doc_id, user_id, op_type, char_id, char, after_id, is_deleted, vector_clock, created_at
 		FROM ops_log
 		WHERE doc_id = $1 AND created_at >= $2
 		ORDER BY created_at ASC, id ASC`
-	rows, err := r.pool.Query(ctx, query, docID, since)
+	rows, err := r.pool.Query(ctx, query, docID, adjustedSince)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ops: %w", err)
 	}
