@@ -27,6 +27,7 @@ export interface Document {
   snapshot_version: number;
   public_sharing_enabled: boolean;
   public_sharing_role: string;
+  user_role?: string;
   created_at: string;
   updated_at: string;
 }
