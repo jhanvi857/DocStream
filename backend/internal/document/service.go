@@ -208,7 +208,19 @@ func (s *service) Share(ctx context.Context, id string, colEmail string, role Ro
 
 	targetUser, err := s.userRepo.GetByEmail(ctx, colEmail)
 	if err != nil {
-		return fmt.Errorf("user with email %s not found: %w", colEmail, err)
+		if err.Error() == "user not found" {
+			targetUser = &user.User{
+				ID:           uuid.New().String(),
+				Email:        colEmail,
+				PasswordHash: "", // Empty string represents a stub user
+				CreatedAt:    time.Now(),
+			}
+			if createErr := s.userRepo.Create(ctx, targetUser); createErr != nil {
+				return fmt.Errorf("failed to create stub user for invitation: %w", createErr)
+			}
+		} else {
+			return fmt.Errorf("user lookup failed: %w", err)
+		}
 	}
 
 	if err := s.docRepo.AddPermission(ctx, id, targetUser.ID, role); err != nil {
