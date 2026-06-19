@@ -7,13 +7,16 @@ import (
 
 // Document represents a collaborative document database record.
 type Document struct {
-	ID              string          `json:"id"`
-	Title           string          `json:"title"`
-	Content         json.RawMessage `json:"content"` // JSONB payload representing CRDT elements
-	OwnerID         string          `json:"owner_id"`
-	SnapshotVersion int             `json:"snapshot_version"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID                   string          `json:"id"`
+	Title                string          `json:"title"`
+	Content              json.RawMessage `json:"content"` // JSONB payload representing CRDT elements
+	OwnerID              string          `json:"owner_id"`
+	SnapshotVersion      int             `json:"snapshot_version"`
+	PublicSharingEnabled bool            `json:"public_sharing_enabled"`
+	PublicSharingRole    string          `json:"public_sharing_role"`
+	UserRole             string          `json:"user_role,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 // Role specifies access rights on a document.

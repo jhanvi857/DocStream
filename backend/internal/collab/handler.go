@@ -9,6 +9,7 @@ import (
 	pkgErrors "docstream/pkg/errors"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
@@ -36,21 +37,18 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Authenticate query parameter token
+	// 1. Authenticate query parameter token (optional for public documents)
+	var userID string
 	tokenStr := r.URL.Query().Get("token")
-	if tokenStr == "" {
-		pkgErrors.NewUnauthorizedError("missing token query parameter").WriteJSON(w)
-		return
-	}
-
-	claims, err := h.tokenManager.ValidateAccessToken(tokenStr)
-	if err != nil {
-		pkgErrors.NewUnauthorizedError("invalid or expired token").WriteJSON(w)
-		return
+	if tokenStr != "" {
+		claims, err := h.tokenManager.ValidateAccessToken(tokenStr)
+		if err == nil {
+			userID = claims.UserID
+		}
 	}
 
 	// 2. Validate document access permissions (must be viewer or above)
-	hasAccess, err := h.docService.VerifyPermission(r.Context(), docID, claims.UserID, document.RoleViewer)
+	hasAccess, err := h.docService.VerifyPermission(r.Context(), docID, userID, document.RoleViewer)
 	if err != nil {
 		pkgErrors.NewInternalError(err.Error()).WriteJSON(w)
 		return
@@ -60,6 +58,18 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Retrieve client's role on the document
+	role, err := h.docService.GetRole(r.Context(), docID, userID)
+	if err != nil {
+		pkgErrors.NewForbiddenError(err.Error()).WriteJSON(w)
+		return
+	}
+
+	// If guest, assign a random guest ID
+	if userID == "" {
+		userID = "guest-" + uuid.New().String()[:8]
+	}
+
 	// 3. Upgrade HTTP connection
 	opts := &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // Configured for flexible dev/prod proxying
@@ -67,12 +77,12 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := websocket.Accept(w, r, opts)
 	if err != nil {
-		slog.Error("websocket upgrade accept failed", "error", err, "docID", docID, "userID", claims.UserID)
+		slog.Error("websocket upgrade accept failed", "error", err, "docID", docID, "userID", userID)
 		return
 	}
 
 	// 4. Instantiate and register the Client
-	client := NewClient(claims.UserID, docID, conn, h.hub)
+	client := NewClient(userID, docID, role, conn, h.hub)
 	h.hub.register <- client
 
 	// 5. Spin up reader/writer routines

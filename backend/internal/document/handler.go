@@ -35,6 +35,11 @@ type shareRequest struct {
 	Role  Role   `json:"role"`
 }
 
+type sharePublicRequest struct {
+	Enabled bool `json:"enabled"`
+	Role    Role `json:"role"`
+}
+
 // List returns all documents a user owns or collaborates on.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.GetUserIDFromContext(r.Context())
@@ -218,6 +223,41 @@ func (h *Handler) Share(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "document shared successfully"})
+}
+
+// SharePublic configures public link sharing.
+func (h *Handler) SharePublic(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		pkgErrors.NewUnauthorizedError("unauthorized").WriteJSON(w)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		pkgErrors.NewValidationError("missing document id").WriteJSON(w)
+		return
+	}
+
+	var req sharePublicRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		pkgErrors.NewValidationError("invalid request body").WriteJSON(w)
+		return
+	}
+
+	err := h.docService.UpdatePublicSharing(r.Context(), id, req.Enabled, req.Role, userID)
+	if err != nil {
+		if strings.Contains(err.Error(), "forbidden") {
+			pkgErrors.NewForbiddenError(err.Error()).WriteJSON(w)
+			return
+		}
+		pkgErrors.NewValidationError(err.Error()).WriteJSON(w)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "document public sharing updated successfully"})
 }
 
 // History retrieves the chronological operation log for a document.

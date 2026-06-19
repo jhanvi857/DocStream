@@ -38,15 +38,50 @@ export default function Home() {
   // Authentication route guard
   useEffect(() => {
     const token = getAccessToken();
+    const urlParams = new URLSearchParams(window.location.search);
+    const hasDocQuery = urlParams.has("doc");
+
     if (token) {
       setIsAuthenticated(true);
     } else {
       setIsAuthenticated(false);
-      if (activeView !== "landing") {
+      if (activeView !== "landing" && !hasDocQuery) {
         router.push("/login");
       }
     }
   }, [activeView, router]);
+
+  // Load shared document (?doc=DOC_ID) on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const docId = urlParams.get("doc");
+    if (docId) {
+      const fetchSharedDoc = async () => {
+        try {
+          const { getDocument } = await import("@/lib/api");
+          const docData = await getDocument(docId);
+          const docItem: DocumentItem = {
+            id: docData.id,
+            title: docData.title,
+            lastEdited: new Date(docData.updated_at).toLocaleDateString() + " " + new Date(docData.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            collaborators: [],
+            isShared: docData.public_sharing_enabled,
+            isFavorite: false,
+            category: "shared",
+            content: typeof docData.content === "string" ? docData.content : JSON.stringify(docData.content),
+            owner_id: docData.owner_id
+          };
+          setDocuments([docItem]);
+          setSelectedDocId(docId);
+          setActiveView("editor");
+        } catch (err) {
+          console.error("Failed to load shared document on mount", err);
+          setActiveView("landing");
+        }
+      };
+      fetchSharedDoc();
+    }
+  }, []);
 
   // Load documents from the backend
   const fetchDocs = async () => {
@@ -535,8 +570,15 @@ export default function Home() {
         <EditorPreview
           document={selectedDoc}
           onBack={() => {
-            setActiveView("dashboard");
-            fetchDocs(); // Refresh documents grid
+            if (getAccessToken()) {
+              setActiveView("dashboard");
+              fetchDocs(); // Refresh documents grid
+            } else {
+              if (typeof window !== "undefined") {
+                window.history.replaceState({}, "", "/");
+              }
+              setActiveView("landing");
+            }
           }}
           onUpdateContent={handleUpdateContent}
           onUpdateTitle={handleUpdateTitle}

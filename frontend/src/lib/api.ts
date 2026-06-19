@@ -25,6 +25,9 @@ export interface Document {
   content: string; // JSON string of CRDT characters or raw content
   owner_id: string;
   snapshot_version: number;
+  public_sharing_enabled: boolean;
+  public_sharing_role: string;
+  user_role?: string;
   created_at: string;
   updated_at: string;
 }
@@ -231,6 +234,13 @@ export async function shareDocument(id: string, email: string, role: "editor" | 
   return fetchAPI<{ message: string }>(`/documents/${id}/share`, {
     method: "POST",
     body: JSON.stringify({ email, role }),
+  });
+}
+
+export async function shareDocumentPublic(id: string, enabled: boolean, role: "editor" | "viewer"): Promise<{ message: string }> {
+  return fetchAPI<{ message: string }>(`/documents/${id}/share/public`, {
+    method: "POST",
+    body: JSON.stringify({ enabled, role }),
   });
 }
 

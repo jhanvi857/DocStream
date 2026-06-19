@@ -22,6 +22,8 @@ type Service interface {
 	Delete(ctx context.Context, id string, userID string) error
 	Share(ctx context.Context, id string, colEmail string, role Role, userID string) error
 	VerifyPermission(ctx context.Context, docID string, userID string, minRole Role) (bool, error)
+	GetRole(ctx context.Context, docID string, userID string) (Role, error)
+	UpdatePublicSharing(ctx context.Context, id string, enabled bool, role Role, userID string) error
 	GetCollaborators(ctx context.Context, id string, userID string) ([]*Collaborator, error)
 	History(ctx context.Context, docID string, userID string, from int, limit int) ([]*HistoryOp, error)
 	HasAccessToDocs(ctx context.Context, userID string, docIDs []string) (map[string]bool, error)
@@ -58,13 +60,15 @@ func (s *service) Create(ctx context.Context, title string, ownerID string) (*Do
 	}
 
 	doc := &Document{
-		ID:              uuid.New().String(),
-		Title:           title,
-		Content:         []byte("[]"),
-		OwnerID:         ownerID,
-		SnapshotVersion: 0,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
+		ID:                   uuid.New().String(),
+		Title:                title,
+		Content:              []byte("[]"),
+		OwnerID:              ownerID,
+		SnapshotVersion:      0,
+		PublicSharingEnabled: false,
+		PublicSharingRole:    "viewer",
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
 	}
 
 	if err := s.docRepo.Create(ctx, doc); err != nil {
@@ -79,11 +83,8 @@ func (s *service) Create(ctx context.Context, title string, ownerID string) (*Do
 }
 
 func (s *service) GetByID(ctx context.Context, id string, userID string) (*Document, error) {
-	hasAccess, err := s.VerifyPermission(ctx, id, userID, RoleViewer)
+	role, err := s.GetRole(ctx, id, userID)
 	if err != nil {
-		return nil, err
-	}
-	if !hasAccess {
 		return nil, errors.New("forbidden: insufficient permission")
 	}
 
@@ -91,6 +92,7 @@ func (s *service) GetByID(ctx context.Context, id string, userID string) (*Docum
 	if err != nil {
 		return nil, err
 	}
+	doc.UserRole = string(role)
 
 	// Reconstruct the latest document content by loading the snapshot and replaying ops
 	content, ops, versionNum, err := s.vService.LoadDocumentState(ctx, id)
@@ -129,6 +131,9 @@ func (s *service) List(ctx context.Context, userID string) ([]*Document, error) 
 	}
 
 	for _, doc := range docs {
+		role, _ := s.GetRole(ctx, doc.ID, userID)
+		doc.UserRole = string(role)
+
 		// Reconstruct the latest document content by loading the snapshot and replaying ops
 		content, ops, versionNum, err := s.vService.LoadDocumentState(ctx, doc.ID)
 		if err == nil {
@@ -233,13 +238,37 @@ func (s *service) HasAccessToDocs(ctx context.Context, userID string, docIDs []s
 	return s.docRepo.HasAccessToDocs(ctx, userID, docIDs)
 }
 
-func (s *service) VerifyPermission(ctx context.Context, docID string, userID string, minRole Role) (bool, error) {
-	role, err := s.docRepo.GetPermission(ctx, docID, userID)
+func (s *service) GetRole(ctx context.Context, docID string, userID string) (Role, error) {
+	doc, err := s.docRepo.GetByID(ctx, docID)
 	if err != nil {
-		if err.Error() == "permission not found" {
-			return false, nil
+		return "", err
+	}
+
+	// 1. Check if user is owner
+	if userID != "" && doc.OwnerID == userID {
+		return RoleOwner, nil
+	}
+
+	// 2. Check explicit permission
+	if userID != "" {
+		role, err := s.docRepo.GetPermission(ctx, docID, userID)
+		if err == nil {
+			return role, nil
 		}
-		return false, err
+	}
+
+	// 3. Check public sharing
+	if doc.PublicSharingEnabled {
+		return Role(doc.PublicSharingRole), nil
+	}
+
+	return "", errors.New("forbidden: no access to document")
+}
+
+func (s *service) VerifyPermission(ctx context.Context, docID string, userID string, minRole Role) (bool, error) {
+	role, err := s.GetRole(ctx, docID, userID)
+	if err != nil {
+		return false, nil
 	}
 
 	roleWeight := func(r Role) int {
@@ -256,6 +285,23 @@ func (s *service) VerifyPermission(ctx context.Context, docID string, userID str
 	}
 
 	return roleWeight(role) >= roleWeight(minRole), nil
+}
+
+func (s *service) UpdatePublicSharing(ctx context.Context, id string, enabled bool, role Role, userID string) error {
+	// Only the owner can change public sharing settings
+	isOwner, err := s.VerifyPermission(ctx, id, userID, RoleOwner)
+	if err != nil {
+		return err
+	}
+	if !isOwner {
+		return errors.New("forbidden: only the owner can configure public sharing")
+	}
+
+	if role != RoleEditor && role != RoleViewer {
+		return errors.New("invalid public sharing role: must be 'editor' or 'viewer'")
+	}
+
+	return s.docRepo.UpdatePublicSharing(ctx, id, enabled, role)
 }
 
 type virtualChar struct {

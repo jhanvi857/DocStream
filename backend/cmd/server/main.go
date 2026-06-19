@@ -199,16 +199,23 @@ func main() {
 
 		r.Get("/documents", docHandler.List)
 		r.Post("/documents", docHandler.Create)
-		r.Get("/documents/{id}", docHandler.Get)
-		r.Patch("/documents/{id}", docHandler.Update)
 		r.Delete("/documents/{id}", docHandler.Delete)
 		r.Post("/documents/{id}/share", docHandler.Share)
-		r.Get("/documents/{id}/history", docHandler.History)
+		r.Post("/documents/{id}/share/public", docHandler.SharePublic)
 
 		// Typeahead/Autocomplete routes
 		r.Get("/suggest/titles", typeaheadHandler.SuggestTitles)
 		r.Get("/documents/{id}/mentions/suggest", typeaheadHandler.SuggestMentions)
 		r.Post("/documents/{id}/mentions/select", typeaheadHandler.SelectMention)
+	})
+
+	// Document REST routes (using OptionalAuthMiddleware to support guest access for public sharing)
+	r.Group(func(r chi.Router) {
+		r.Use(auth.OptionalAuthMiddleware(tokenManager))
+
+		r.Get("/documents/{id}", docHandler.Get)
+		r.Patch("/documents/{id}", docHandler.Update)
+		r.Get("/documents/{id}/history", docHandler.History)
 	})
 
 	// WebSocket upgrade endpoint (validates token inside query parameters)

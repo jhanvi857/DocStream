@@ -17,6 +17,7 @@ type Repository interface {
 	ListByUserID(ctx context.Context, userID string) ([]*Document, error)
 	UpdateTitle(ctx context.Context, id string, title string) error
 	Delete(ctx context.Context, id string) error
+	UpdatePublicSharing(ctx context.Context, id string, enabled bool, role Role) error
 	AddPermission(ctx context.Context, docID string, userID string, role Role) error
 	GetPermission(ctx context.Context, docID string, userID string) (Role, error)
 	GetCollaborators(ctx context.Context, docID string) ([]*Collaborator, error)
@@ -42,9 +43,9 @@ func (r *postgresRepository) Create(ctx context.Context, doc *Document) error {
 	}()
 
 	docQuery := `
-		INSERT INTO documents (id, title, content, owner_id, snapshot_version, snapshot_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err = tx.Exec(ctx, docQuery, doc.ID, doc.Title, doc.Content, doc.OwnerID, doc.SnapshotVersion, doc.CreatedAt, doc.CreatedAt, doc.UpdatedAt)
+		INSERT INTO documents (id, title, content, owner_id, snapshot_version, public_sharing_enabled, public_sharing_role, snapshot_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	_, err = tx.Exec(ctx, docQuery, doc.ID, doc.Title, doc.Content, doc.OwnerID, doc.SnapshotVersion, doc.PublicSharingEnabled, doc.PublicSharingRole, doc.CreatedAt, doc.CreatedAt, doc.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert document: %w", err)
 	}
@@ -64,9 +65,9 @@ func (r *postgresRepository) Create(ctx context.Context, doc *Document) error {
 }
 
 func (r *postgresRepository) GetByID(ctx context.Context, id string) (*Document, error) {
-	query := `SELECT id, title, content, owner_id, snapshot_version, created_at, updated_at FROM documents WHERE id = $1`
+	query := `SELECT id, title, content, owner_id, snapshot_version, public_sharing_enabled, public_sharing_role, created_at, updated_at FROM documents WHERE id = $1`
 	var doc Document
-	err := r.pool.QueryRow(ctx, query, id).Scan(&doc.ID, &doc.Title, &doc.Content, &doc.OwnerID, &doc.SnapshotVersion, &doc.CreatedAt, &doc.UpdatedAt)
+	err := r.pool.QueryRow(ctx, query, id).Scan(&doc.ID, &doc.Title, &doc.Content, &doc.OwnerID, &doc.SnapshotVersion, &doc.PublicSharingEnabled, &doc.PublicSharingRole, &doc.CreatedAt, &doc.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("document not found")
@@ -78,7 +79,7 @@ func (r *postgresRepository) GetByID(ctx context.Context, id string) (*Document,
 
 func (r *postgresRepository) ListByUserID(ctx context.Context, userID string) ([]*Document, error) {
 	query := `
-		SELECT d.id, d.title, d.content, d.owner_id, d.snapshot_version, d.created_at, d.updated_at
+		SELECT d.id, d.title, d.content, d.owner_id, d.snapshot_version, d.public_sharing_enabled, d.public_sharing_role, d.created_at, d.updated_at
 		FROM documents d
 		JOIN document_permissions dp ON d.id = dp.doc_id
 		WHERE dp.user_id = $1
@@ -92,7 +93,7 @@ func (r *postgresRepository) ListByUserID(ctx context.Context, userID string) ([
 	docs := make([]*Document, 0)
 	for rows.Next() {
 		var doc Document
-		err := rows.Scan(&doc.ID, &doc.Title, &doc.Content, &doc.OwnerID, &doc.SnapshotVersion, &doc.CreatedAt, &doc.UpdatedAt)
+		err := rows.Scan(&doc.ID, &doc.Title, &doc.Content, &doc.OwnerID, &doc.SnapshotVersion, &doc.PublicSharingEnabled, &doc.PublicSharingRole, &doc.CreatedAt, &doc.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan document: %w", err)
 		}
@@ -106,6 +107,15 @@ func (r *postgresRepository) UpdateTitle(ctx context.Context, id string, title s
 	_, err := r.pool.Exec(ctx, query, title, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to update document title: %w", err)
+	}
+	return nil
+}
+
+func (r *postgresRepository) UpdatePublicSharing(ctx context.Context, id string, enabled bool, role Role) error {
+	query := `UPDATE documents SET public_sharing_enabled = $1, public_sharing_role = $2, updated_at = $3 WHERE id = $4`
+	_, err := r.pool.Exec(ctx, query, enabled, string(role), time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update public sharing: %w", err)
 	}
 	return nil
 }

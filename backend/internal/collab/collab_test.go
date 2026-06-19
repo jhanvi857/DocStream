@@ -64,6 +64,10 @@ func (m *mockDocService) VerifyPermission(ctx context.Context, docID string, use
 	return true, nil
 }
 
+func (m *mockDocService) GetRole(ctx context.Context, docID string, userID string) (document.Role, error) {
+	return document.RoleEditor, nil
+}
+
 // readNextMsgOfType reads from the websocket connection until a message of targetType is found.
 func readNextMsgOfType(ctx context.Context, c *websocket.Conn, targetType ws.MessageType) (ws.Message, error) {
 	for {

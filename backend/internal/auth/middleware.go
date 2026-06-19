@@ -45,6 +45,37 @@ func AuthMiddleware(tm *TokenManager) func(http.Handler) http.Handler {
 	}
 }
 
+func OptionalAuthMiddleware(tm *TokenManager) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			tokenStr := parts[1]
+			claims, err := tm.ValidateAccessToken(tokenStr)
+			if err != nil {
+				// Bypass invalid token so user is processed as guest instead of failing
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+			ctx = context.WithValue(ctx, EmailKey, claims.Email)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func GetUserIDFromContext(ctx context.Context) (string, bool) {
 	val, ok := ctx.Value(UserIDKey).(string)
 	return val, ok

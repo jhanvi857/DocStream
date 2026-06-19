@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"docstream/internal/document"
 	"docstream/internal/ws"
 
 	"github.com/google/uuid"
@@ -25,9 +26,10 @@ type Client struct {
 	conn   *websocket.Conn
 	send   chan ws.Message
 	hub    *Hub
+	role   document.Role
 }
 
-func NewClient(userID, docID string, conn *websocket.Conn, hub *Hub) *Client {
+func NewClient(userID, docID string, role document.Role, conn *websocket.Conn, hub *Hub) *Client {
 	return &Client{
 		id:     uuid.New().String(),
 		userID: userID,
@@ -35,6 +37,7 @@ func NewClient(userID, docID string, conn *websocket.Conn, hub *Hub) *Client {
 		conn:   conn,
 		send:   make(chan ws.Message, 256),
 		hub:    hub,
+		role:   role,
 	}
 }
 
