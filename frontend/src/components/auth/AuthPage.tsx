@@ -67,7 +67,7 @@ export default function AuthPage({ mode }: AuthPageProps) {
       }
       
       // Redirect to home (which will route to the authenticated dashboard view)
-      router.push("/");
+      router.push("/" + window.location.search);
     } catch (err: any) {
       setError(err.message || "An authentication error occurred.");
     } finally {

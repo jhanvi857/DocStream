@@ -44,22 +44,30 @@ export interface HistoryOp {
 // Token helper getters
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("docstream_access_token");
+  const val = localStorage.getItem("docstream_access_token");
+  if (!val || val === "null" || val === "undefined") return null;
+  return val;
 }
 
 export function getRefreshToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("docstream_refresh_token");
+  const val = localStorage.getItem("docstream_refresh_token");
+  if (!val || val === "null" || val === "undefined") return null;
+  return val;
 }
 
 export function getUserID(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("docstream_user_id");
+  const val = localStorage.getItem("docstream_user_id");
+  if (!val || val === "null" || val === "undefined") return null;
+  return val;
 }
 
 export function getEmail(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("docstream_email");
+  const val = localStorage.getItem("docstream_email");
+  if (!val || val === "null" || val === "undefined") return null;
+  return val;
 }
 
 export function setSession(data: AuthResponse | null) {

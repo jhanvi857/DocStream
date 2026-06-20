@@ -76,7 +76,13 @@ export default function Home() {
           setActiveView("editor");
         } catch (err) {
           console.error("Failed to load shared document on mount", err);
-          setActiveView("landing");
+          const token = getAccessToken();
+          if (!token) {
+            router.push("/login" + window.location.search);
+          } else {
+            alert("You do not have permission to access this document, or it does not exist.");
+            setActiveView("dashboard");
+          }
         }
       };
       fetchSharedDoc();
