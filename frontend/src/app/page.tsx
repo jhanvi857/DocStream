@@ -331,19 +331,14 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-3">
-              {/* <button 
-                onClick={() => {
-                  if (isAuthenticated) {
-                    setActiveView("dashboard");
-                  } else {
-                    router.push("/login");
-                  }
-                }}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                Go to Dashboard
-              </button> */}
-              {!isAuthenticated && (
+              {isAuthenticated ? (
+                <button 
+                  onClick={() => setActiveView("dashboard")}
+                  className="rounded-xl bg-crimson hover:bg-crimson-hover text-white px-4 py-2 text-xs font-bold shadow-md shadow-crimson/15 cursor-pointer"
+                >
+                  Go to Dashboard
+                </button>
+              ) : (
                 <Link 
                   href="/signup"
                   className="rounded-xl bg-crimson hover:bg-crimson-hover text-white px-4 py-2 text-xs font-bold shadow-md shadow-crimson/15 cursor-pointer"
@@ -356,6 +351,7 @@ export default function Home() {
 
           {/* Hero */}
           <HeroSection 
+            isAuthenticated={isAuthenticated}
             onGetStarted={() => {
               if (isAuthenticated) {
                 setActiveView("dashboard");
@@ -403,7 +399,7 @@ export default function Home() {
                   }}
                   className="group relative inline-flex items-center justify-center gap-2 rounded-xl bg-crimson px-7 py-4 text-xs font-bold text-white shadow-xl shadow-crimson/30 hover:bg-crimson-hover hover:scale-[1.02] transition-all duration-200 cursor-pointer"
                 >
-                  <span>Start Collaborating Free</span>
+                  <span>{isAuthenticated ? "Go to Dashboard" : "Start Collaborating Free"}</span>
                   <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                 </button>
                 <button
@@ -437,6 +433,15 @@ export default function Home() {
           <WatchDemoModal 
             isOpen={watchDemoOpen}
             onClose={() => setWatchDemoOpen(false)}
+            onAction={() => {
+              setWatchDemoOpen(false);
+              if (isAuthenticated) {
+                setActiveView("dashboard");
+              } else {
+                router.push("/signup");
+              }
+            }}
+            isAuthenticated={isAuthenticated}
           />
 
           {/* Landing Footer */}

@@ -6,9 +6,11 @@ import { X, ChevronRight, ChevronLeft, Shield, Eye, Settings, FileText, CheckCir
 interface WatchDemoModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onAction?: () => void;
+  isAuthenticated?: boolean;
 }
 
-export default function WatchDemoModal({ isOpen, onClose }: WatchDemoModalProps) {
+export default function WatchDemoModal({ isOpen, onClose, onAction, isAuthenticated = false }: WatchDemoModalProps) {
   const [activeStep, setActiveStep] = useState(0);
 
   if (!isOpen) return null;
@@ -188,11 +190,11 @@ export default function WatchDemoModal({ isOpen, onClose }: WatchDemoModalProps)
               </button>
             ) : (
               <button
-                onClick={onClose}
+                onClick={onAction || onClose}
                 className="inline-flex items-center justify-center gap-1 bg-crimson hover:bg-crimson-hover text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-md shadow-crimson/10 cursor-pointer"
               >
                 <CheckCircle className="h-4.5 w-4.5" />
-                <span>Get Started Now</span>
+                <span>{isAuthenticated ? "Go to Dashboard" : "Get Started Now"}</span>
               </button>
             )}
           </div>

@@ -6,9 +6,10 @@ import { ArrowRight, Play, CheckCircle2, MessageSquare, Shield, History, Sparkle
 interface HeroSectionProps {
   onGetStarted: () => void;
   onWatchDemo: () => void;
+  isAuthenticated?: boolean;
 }
 
-export default function HeroSection({ onGetStarted, onWatchDemo }: HeroSectionProps) {
+export default function HeroSection({ onGetStarted, onWatchDemo, isAuthenticated = false }: HeroSectionProps) {
   const [typedText, setTypedText] = useState("");
   const [cursorPos, setCursorPos] = useState({ x: 45, y: 55 });
   const fullText = "Design sprint guidelines & brand roadmap...";
@@ -65,7 +66,7 @@ export default function HeroSection({ onGetStarted, onWatchDemo }: HeroSectionPr
                 onClick={onGetStarted}
                 className="group relative inline-flex items-center justify-center gap-2 rounded-xl bg-crimson px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-crimson/20 hover:bg-crimson-hover hover:scale-[1.02] transition-all duration-200 cursor-pointer"
               >
-                <span>Get Started Free</span>
+                <span>{isAuthenticated ? "Go to Dashboard" : "Get Started Free"}</span>
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
               </button>
               
