@@ -28,6 +28,7 @@ flowchart TD
         
         DocHandler --> DocService[Document Service]
         TypeaheadHandler --> TypeaheadService[Typeahead Service]
+        TypeaheadHandler -->|Query active session words| Hub
         
         DocService -->|Hooks: OnCreate/OnShare| TypeaheadService
         TypeaheadService -->|Lazy Load Collabs| DB
@@ -188,6 +189,19 @@ DocStream runs two completely independent Trie + PersistenceManager pairs with d
   * Evicted Tries are marked as `Closing`.
   * Concurrent client requests checking the cache will detect the `Closing` state, release global locks, wait on a synchronization channel (`<-mt.Closed`), and then reload cleanly.
   * The janitor calls `PM.Close()` to flush any un-checkpointed selections to disk before deleting map references and closing the channel.
+
+#### C. Per-Document Words Index (Inline Copilot-like Autocomplete)
+* **Purpose**: Performs real-time inline ghost-text word autocompletion based on the active document text content as the user types.
+* **Indexing & Performance**:
+  * An in-memory, session-scoped `wordsTrie` (bounded at 10,000 words) is maintained.
+  * The Trie is marked `dirty` on edit operations.
+  * When requested, the `wordsTrie` is dynamically rebuilt by tokenizing the current document text content.
+* **Frontend Overlay System**:
+  * A custom Next.js frontend helper calls `GET /documents/{id}/suggest` to retrieve prefix-matched candidates.
+  * Suggestions are debounced (150ms) to minimize server load.
+  * Suffix suggestions are rendered as non-intrusive absolute-positioned inline ghost text (gray italics) directly at the editor cursor location.
+  * Pressing `Tab` intercepts the default tab focus shift, inserts the completion suffix via the Selection API, updates the cursor position, and triggers CRDT diffing to broadcast the update.
+  * Pressing `Escape` or typing hides/recalculates suggestions.
   
 ### 3. Fault-Tolerant Async Writes
 All typeahead mutation hooks (such as indexing new titles on creation or registering selections) are executed asynchronously in background goroutines:

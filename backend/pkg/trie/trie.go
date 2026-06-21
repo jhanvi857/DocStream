@@ -3,6 +3,7 @@ package trie
 import (
 	"container/list"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -71,7 +72,8 @@ func (t *Trie) Select(word string) {
 // It assumes the write lock t.mu is already held.
 // If increment is true, it increments the frequency if the word exists.
 func (t *Trie) insertUnlocked(word string, initialFreq int64, increment bool) {
-	runes := []rune(word)
+	lowercaseWord := strings.ToLower(word)
+	runes := []rune(lowercaseWord)
 	curr := t.root
 
 	for _, r := range runes {
@@ -90,21 +92,21 @@ func (t *Trie) insertUnlocked(word string, initialFreq int64, increment bool) {
 			t.evictOldestUnlocked()
 		}
 		curr.Frequency = initialFreq
-		curr.Word = word
+		curr.Word = word // Store original case word
 
-		elem := t.lruList.PushFront(word)
-		t.wordMap[word] = elem
+		elem := t.lruList.PushFront(lowercaseWord)
+		t.wordMap[lowercaseWord] = elem
 	} else {
 		if increment {
 			curr.Frequency++
 		}
 		// Update LRU access order
-		if elem, exists := t.wordMap[word]; exists {
+		if elem, exists := t.wordMap[lowercaseWord]; exists {
 			t.lruList.MoveToFront(elem)
 		} else {
 			// Fallback in case LRU tracking was out of sync
-			elem := t.lruList.PushFront(word)
-			t.wordMap[word] = elem
+			elem := t.lruList.PushFront(lowercaseWord)
+			t.wordMap[lowercaseWord] = elem
 		}
 	}
 }
@@ -125,7 +127,8 @@ func (t *Trie) evictOldestUnlocked() {
 
 // traverse the path for a word and remove unused nodes.
 func (t *Trie) pruneUnlocked(word string) {
-	runes := []rune(word)
+	lowercaseWord := strings.ToLower(word)
+	runes := []rune(lowercaseWord)
 	nodes := make([]*Node, len(runes)+1)
 	nodes[0] = t.root
 
@@ -161,7 +164,7 @@ func (t *Trie) Suggest(prefix string, limit int) []Suggestion {
 	}
 
 	t.mu.RLock()
-	runes := []rune(prefix)
+	runes := []rune(strings.ToLower(prefix))
 	curr := t.root
 	for _, r := range runes {
 		next, exists := curr.Children[r]
@@ -217,7 +220,7 @@ func (t *Trie) GetWordFrequency(word string) int64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	runes := []rune(word)
+	runes := []rune(strings.ToLower(word))
 	curr := t.root
 	for _, r := range runes {
 		next, exists := curr.Children[r]
@@ -242,9 +245,9 @@ func (t *Trie) ExportWords() []SnapshotEntry {
 
 	entries := make([]SnapshotEntry, 0, t.lruList.Len())
 	for elem := t.lruList.Back(); elem != nil; elem = elem.Prev() {
-		word := elem.Value.(string)
+		lowercaseWord := elem.Value.(string)
 
-		runes := []rune(word)
+		runes := []rune(lowercaseWord)
 		curr := t.root
 		found := true
 		for _, r := range runes {
@@ -258,7 +261,7 @@ func (t *Trie) ExportWords() []SnapshotEntry {
 
 		if found && curr.Frequency > 0 {
 			entries = append(entries, SnapshotEntry{
-				Word:      word,
+				Word:      curr.Word, // Export original case word
 				Frequency: curr.Frequency,
 			})
 		}

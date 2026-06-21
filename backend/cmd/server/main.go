@@ -143,7 +143,7 @@ func main() {
 	authHandler := auth.NewHandler(authService)
 	docHandler := document.NewHandler(docService)
 	wsHandler := collab.NewHandler(hub, docService, tokenManager)
-	typeaheadHandler := typeahead.NewHandler(typeaheadService, docService)
+	typeaheadHandler := typeahead.NewHandler(typeaheadService, docService, hub)
 
 	// Initialize rate limiter (100 requests per 1 minute)
 	rateLimiter := pkgMiddleware.NewRateLimiter(100, 1*time.Minute)
@@ -207,6 +207,7 @@ func main() {
 		r.Get("/suggest/titles", typeaheadHandler.SuggestTitles)
 		r.Get("/documents/{id}/mentions/suggest", typeaheadHandler.SuggestMentions)
 		r.Post("/documents/{id}/mentions/select", typeaheadHandler.SelectMention)
+		r.Get("/documents/{id}/suggest", typeaheadHandler.SuggestWords)
 	})
 
 	// Document REST routes (using OptionalAuthMiddleware to support guest access for public sharing)

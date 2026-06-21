@@ -155,3 +155,10 @@ func (h *Hub) GetOrCreateSession(docID string) *Session {
 	}
 	return session
 }
+
+// GetActiveSession returns a session if it is currently active, or nil.
+func (h *Hub) GetActiveSession(docID string) *Session {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.sessions[docID]
+}

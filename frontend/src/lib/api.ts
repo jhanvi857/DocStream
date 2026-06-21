@@ -41,6 +41,11 @@ export interface HistoryOp {
   createdAt: string;
 }
 
+export interface Suggestion {
+  word: string;
+  frequency: number;
+}
+
 // Token helper getters
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -254,6 +259,12 @@ export async function shareDocumentPublic(id: string, enabled: boolean, role: "e
 
 export async function getDocumentHistory(id: string, from = 0, limit = 50): Promise<HistoryOp[]> {
   return fetchAPI<HistoryOp[]>(`/documents/${id}/history?from=${from}&limit=${limit}`, {
+    method: "GET",
+  });
+}
+
+export async function getWordSuggestions(id: string, q: string, limit = 5): Promise<Suggestion[]> {
+  return fetchAPI<Suggestion[]>(`/documents/${id}/suggest?q=${encodeURIComponent(q)}&limit=${limit}`, {
     method: "GET",
   });
 }

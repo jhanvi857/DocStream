@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"docstream/internal/auth"
+	"docstream/internal/collab"
+	"docstream/internal/crdt"
 	"docstream/internal/document"
 	pkgErrors "docstream/pkg/errors"
 	"docstream/pkg/trie"
@@ -18,13 +20,15 @@ import (
 type Handler struct {
 	typeaheadService *Service
 	docService       document.Service
+	hub              *collab.Hub
 }
 
 // NewHandler instantiates a new typeahead HTTP Handler.
-func NewHandler(ts *Service, ds document.Service) *Handler {
+func NewHandler(ts *Service, ds document.Service, hub *collab.Hub) *Handler {
 	return &Handler{
 		typeaheadService: ts,
 		docService:       ds,
+		hub:              hub,
 	}
 }
 
@@ -155,6 +159,7 @@ func (h *Handler) SuggestMentions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query().Get("q")
+	q = strings.TrimPrefix(q, "@")
 	limit := 10
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
@@ -216,4 +221,88 @@ func (h *Handler) SelectMention(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "mention selection recorded"})
+}
+
+// SuggestWords handles autocompleting local document words for inline autocomplete.
+func (h *Handler) SuggestWords(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserIDFromContext(r.Context())
+	if !ok {
+		pkgErrors.NewUnauthorizedError("unauthorized").WriteJSON(w)
+		return
+	}
+
+	docID := chi.URLParam(r, "id")
+	if docID == "" {
+		pkgErrors.NewValidationError("missing document id").WriteJSON(w)
+		return
+	}
+
+	// Verify the user has access to view this document
+	if appErr := h.verifyAccess(r, docID, userID, document.RoleViewer, "forbidden: insufficient permission to view document"); appErr != nil {
+		appErr.WriteJSON(w)
+		return
+	}
+
+	q := r.URL.Query().Get("q")
+	limit := 5
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+			limit = val
+		}
+	}
+
+	var suggestions []trie.Suggestion
+
+	// Check if the document session is active in the Hub
+	session := h.hub.GetActiveSession(docID)
+	if session != nil {
+		// Document is currently open/edited in memory
+		suggestions = session.SuggestWords(q, limit)
+	} else {
+		// Document is inactive - load the text from the DB and build a temp trie
+		doc, err := h.docService.GetByID(r.Context(), docID, userID)
+		if err != nil {
+			pkgErrors.NewInternalError(err.Error()).WriteJSON(w)
+			return
+		}
+
+		crdtDoc, err := crdt.FromJSON(doc.Content)
+		if err != nil {
+			pkgErrors.NewInternalError(err.Error()).WriteJSON(w)
+			return
+		}
+
+		text := crdtDoc.ToText()
+		words := extractWords(text)
+		
+		tempTrie := trie.NewTrie(10000)
+		for _, w := range words {
+			tempTrie.Insert(w)
+		}
+		suggestions = tempTrie.Suggest(q, limit)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(suggestions)
+}
+
+func extractWords(text string) []string {
+	var words []string
+	var current []rune
+	for _, r := range text {
+		// Define what counts as a word: letters, digits, and underscores
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			current = append(current, r)
+		} else {
+			if len(current) >= 2 {
+				words = append(words, string(current))
+			}
+			current = current[:0]
+		}
+	}
+	if len(current) >= 2 {
+		words = append(words, string(current))
+	}
+	return words
 }

@@ -11,6 +11,7 @@ import (
 	"docstream/internal/crdt"
 	"docstream/internal/version"
 	"docstream/internal/ws"
+	"docstream/pkg/trie"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,6 +33,10 @@ type Session struct {
 
 	// Presence + Cursor tracking (in-memory only)
 	cursors map[string]int // client.id -> cursor index
+
+	// Words trie for local text autocomplete suggestions (Copilot-like)
+	dirty     bool
+	wordsTrie *trie.Trie
 }
 
 // document Session with its dependencies.
@@ -45,6 +50,8 @@ func NewSession(docID string, vService version.Service) *Session {
 		loadedChan:      make(chan struct{}),
 		cursors:         make(map[string]int),
 		opsChan:         make(chan hubMessage, 1000),
+		dirty:           true,
+		wordsTrie:       trie.NewTrie(10000),
 	}
 }
 
@@ -360,6 +367,7 @@ func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client
 		span.RecordError(err)
 		return err
 	}
+	s.dirty = true
 
 	// 2. Persist the operation to PostgreSQL
 	vcJSON, _ := json.Marshal(op.VectorClock)
@@ -457,6 +465,7 @@ func (s *Session) ApplyRemoteOp(ctx context.Context, op crdt.Op) error {
 		span.RecordError(err)
 		return err
 	}
+	s.dirty = true
 
 	// 2. Format operation message for fan-out
 	payload, err := json.Marshal(op)
@@ -500,4 +509,43 @@ func GetDeterministicColor(userID string) string {
 		"#EC4899", // Pink
 	}
 	return colors[hash%uint32(len(colors))]
+}
+
+// SuggestWords returns prefix-matched suggestions from the document's active text content.
+func (s *Session) SuggestWords(prefix string, limit int) []trie.Suggestion {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.dirty {
+		// Rebuild the words trie from the current document text content
+		s.wordsTrie = trie.NewTrie(10000) // max budget of 10,000 words
+		text := s.crdtDoc.ToText()
+		words := extractWords(text)
+		for _, w := range words {
+			s.wordsTrie.Insert(w)
+		}
+		s.dirty = false
+	}
+
+	return s.wordsTrie.Suggest(prefix, limit)
+}
+
+func extractWords(text string) []string {
+	var words []string
+	var current []rune
+	for _, r := range text {
+		// A word consists of letters, digits, and underscores
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			current = append(current, r)
+		} else {
+			if len(current) >= 2 {
+				words = append(words, string(current))
+			}
+			current = current[:0]
+		}
+	}
+	if len(current) >= 2 {
+		words = append(words, string(current))
+	}
+	return words
 }

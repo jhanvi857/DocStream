@@ -6,7 +6,7 @@ import {
   MessageSquare, Star, Lock, Globe, CheckCircle, Clock, Users, ShieldAlert
 } from "lucide-react";
 import { DocumentItem } from "../dashboard/DocGrid";
-import { WS_BASE_URL, getAccessToken, getUserID, getEmail, getDocumentHistory, getDocument, Document, HistoryOp } from "@/lib/api";
+import { WS_BASE_URL, getAccessToken, getUserID, getEmail, getDocumentHistory, getDocument, getWordSuggestions, Document, HistoryOp } from "@/lib/api";
 import { CRDTDoc, diffAndGenerateOps, Op, CRDTChar } from "@/lib/crdt";
 import ShareModal from "./ShareModal";
 
@@ -411,17 +411,143 @@ export default function EditorPreview({
     setSelectedText("");
   }, [doc.id]);
 
+  // Autocomplete Suggestion States and Refs
+  const [activeSuggestion, setActiveSuggestion] = useState<{
+    prefix: string;
+    word: string;
+    suffix: string;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  const autocompleteTimerRef = useRef<number | null>(null);
+
   useEffect(() => {
     return () => {
       if (saveTimerRef.current !== null) {
         window.clearTimeout(saveTimerRef.current);
       }
+      if (autocompleteTimerRef.current !== null) {
+        window.clearTimeout(autocompleteTimerRef.current);
+      }
     };
   }, []);
+
+  const triggerAutocomplete = (caretPos: number) => {
+    if (autocompleteTimerRef.current !== null) {
+      window.clearTimeout(autocompleteTimerRef.current);
+    }
+
+    if (!editorRef.current || userRole === "viewer") {
+      setActiveSuggestion(null);
+      return;
+    }
+
+    autocompleteTimerRef.current = window.setTimeout(async () => {
+      try {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+          setActiveSuggestion(null);
+          return;
+        }
+
+        const range = selection.getRangeAt(0);
+        const preCaretRange = range.cloneRange();
+        preCaretRange.selectNodeContents(editorRef.current!);
+        preCaretRange.setEnd(range.endContainer, range.endOffset);
+        const textBeforeCaret = preCaretRange.toString();
+
+        // Match the last alphanumeric word prefix being typed
+        const match = textBeforeCaret.match(/([a-zA-Z0-9_]+)$/);
+        if (!match) {
+          setActiveSuggestion(null);
+          return;
+        }
+
+        const prefix = match[1];
+        // Minimum prefix length of 2 characters for autocomplete
+        if (prefix.length < 2) {
+          setActiveSuggestion(null);
+          return;
+        }
+
+        // Query suggestions from backend
+        const suggestions = await getWordSuggestions(doc.id, prefix, 3);
+        if (suggestions && suggestions.length > 0) {
+          // Take the highest frequency suggestion
+          const bestSuggestion = suggestions[0].word;
+          
+          // Verify it matches the prefix case-insensitively, and has extra characters to suggest
+          if (bestSuggestion.toLowerCase().startsWith(prefix.toLowerCase()) && bestSuggestion.length > prefix.length) {
+            const suffix = bestSuggestion.substring(prefix.length);
+            
+            // Get coordinates of the caret
+            const coord = getCaretCoordinates(editorRef.current!, caretPos);
+            if (coord) {
+              setActiveSuggestion({
+                prefix,
+                word: bestSuggestion,
+                suffix,
+                top: coord.top,
+                left: coord.left
+              });
+              return;
+            }
+          }
+        }
+        setActiveSuggestion(null);
+      } catch (err) {
+        console.error("Autocomplete error:", err);
+        setActiveSuggestion(null);
+      }
+    }, 150); // 150ms debounce
+  };
+
+  const acceptSuggestion = () => {
+    if (!activeSuggestion || !editorRef.current) return;
+
+    editorRef.current.focus();
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      
+      const textNode = document.createTextNode(activeSuggestion.suffix);
+      range.insertNode(textNode);
+      
+      // Move cursor to end of inserted suffix
+      range.setStartAfter(textNode);
+      range.setEndAfter(textNode);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      
+      // Clear suggestion
+      setActiveSuggestion(null);
+      
+      // Trigger editor inputs to register changes in CRDT and push via WebSocket
+      handleInput();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Tab" && activeSuggestion) {
+      e.preventDefault();
+      acceptSuggestion();
+      return;
+    }
+    
+    if (e.key === "Escape") {
+      setActiveSuggestion(null);
+      return;
+    }
+  };
 
   // Handle local text editing
   const handleInput = () => {
     if (!editorRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    // Instantly clear suggestion when typing to prevent rendering lag
+    setActiveSuggestion(null);
 
     setSaveStatus("saving");
 
@@ -473,13 +599,18 @@ export default function EditorPreview({
 
   // Broadcast local cursor offset
   const handleCaretUpdate = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!editorRef.current) return;
     
     // Guard: prevent cursor updates if focus is in comment box or elsewhere
     if (document.activeElement !== editorRef.current) return;
 
     const caretPos = getCaretPosition(editorRef.current);
+
+    // Trigger local autocomplete word suggestions
+    triggerAutocomplete(caretPos);
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
     wsRef.current.send(JSON.stringify({
       type: "cursor",
       doc_id: doc.id,
@@ -778,6 +909,7 @@ export default function EditorPreview({
               onInput={handleInput}
               onMouseUp={handleMouseUp}
               onKeyUp={handleMouseUp}
+              onKeyDown={handleKeyDown}
               data-placeholder="Start typing your ideas here..."
               className="editor-canvas outline-hidden prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed flex-1"
             />
@@ -806,6 +938,22 @@ export default function EditorPreview({
                 </div>
               </div>
             ))}
+
+            {/* Local Autocomplete Ghost Suggestion */}
+            {activeSuggestion && (
+              <span
+                className="absolute pointer-events-none text-slate-400/50 text-sm leading-relaxed select-none font-normal z-10 whitespace-pre italic"
+                style={{
+                  top: `${activeSuggestion.top + 64}px`,
+                  left: `${activeSuggestion.left + 48}px`,
+                }}
+              >
+                {activeSuggestion.suffix}
+                <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-0.25 rounded bg-slate-100 text-[8px] font-bold text-slate-400 border border-slate-200 select-none uppercase tracking-wide not-italic">
+                  Tab
+                </span>
+              </span>
+            )}
 
             {/* Document Bottom Footer */}
             <div className="border-t border-slate-100 pt-6 mt-8 flex justify-between items-center text-[11px] text-slate-400 select-none">

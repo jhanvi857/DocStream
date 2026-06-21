@@ -2,6 +2,7 @@ package trie
 
 import (
 	"sort"
+	"strings"
 )
 
 // FuzzySuggest returns suggestions matching the prefix with up to 1 edit distance.
@@ -14,7 +15,7 @@ func (t *Trie) FuzzySuggest(prefix string, limit int) []Suggestion {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	runes := []rune(prefix)
+	runes := []rune(strings.ToLower(prefix))
 	if len(runes) == 0 {
 		// Empty prefix, fallback to standard suggest
 		t.mu.RUnlock()
