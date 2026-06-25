@@ -301,6 +301,13 @@ export default function Home() {
   const favoritesCount = documents.filter(d => d.isFavorite && d.category !== "trash").length;
   const trashCount = documents.filter(d => d.category === "trash").length;
 
+  // Calculate real storage used (size of all document contents + titles in bytes)
+  const storageUsedBytes = documents.reduce((acc, doc) => {
+    const contentSize = doc.content ? doc.content.length : 0;
+    const titleSize = doc.title ? doc.title.length : 0;
+    return acc + contentSize + titleSize;
+  }, 0);
+
   return (
     <div className="min-h-screen flex flex-col bg-white">
       
@@ -508,6 +515,7 @@ export default function Home() {
             trashCount={trashCount}
             isOpen={sidebarOpen}
             onClose={() => setSidebarOpen(false)}
+            storageUsedBytes={storageUsedBytes}
           />
 
           <div className="flex-1 flex flex-col min-h-screen">

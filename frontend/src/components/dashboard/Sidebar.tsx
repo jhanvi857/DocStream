@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { FileText, Users, Star, Trash2, Folder, Plus, ChevronRight, HelpCircle, HardDrive } from "lucide-react";
+import { FileText, Users, Star, Trash2, HelpCircle, HardDrive } from "lucide-react";
 
 interface SidebarProps {
   activeTab: string;
@@ -12,6 +12,7 @@ interface SidebarProps {
   myDocsCount: number;
   isOpen: boolean;
   onClose: () => void;
+  storageUsedBytes: number;
 }
 
 export default function Sidebar({
@@ -22,7 +23,8 @@ export default function Sidebar({
   sharedCount,
   myDocsCount,
   isOpen,
-  onClose
+  onClose,
+  storageUsedBytes
 }: SidebarProps) {
   const menuItems = [
     { id: "mydocs", label: "My Docs", icon: FileText, count: myDocsCount },
@@ -31,12 +33,21 @@ export default function Sidebar({
     { id: "trash", label: "Trash", icon: Trash2, count: trashCount },
   ];
 
-  const workspaceFolders = [
-    { name: "Product Specs", color: "text-crimson" },
-    { name: "Marketing Briefs", color: "text-crimson-hover" },
-    { name: "Sprint Planning", color: "text-crimson/80" },
-    { name: "Brand Assets", color: "text-slate-500" },
-  ];
+  // Helper to format bytes to human-readable string
+  const formatBytes = (bytes: number, decimals = 1) => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const val = bytes / Math.pow(k, i);
+    return `${val.toFixed(dm)} ${sizes[i]}`;
+  };
+
+  const limitBytes = 10 * 1024 * 1024; // 10 MB limit
+  const percentage = Math.min((storageUsedBytes / limitBytes) * 100, 100);
+  const formattedUsed = formatBytes(storageUsedBytes);
+  const formattedLimit = formatBytes(limitBytes);
 
   return (
     <>
@@ -110,30 +121,6 @@ export default function Sidebar({
           })}
         </div>
 
-        {/* Workspace Folders */}
-        <div className="mt-8 flex-1">
-          <div className="flex items-center justify-between px-2.5 mb-2.5">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Folders</p>
-            <button className="text-slate-400 hover:text-crimson transition-colors p-0.5 rounded hover:bg-slate-100 cursor-pointer">
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="space-y-1">
-            {workspaceFolders.map((folder, idx) => (
-              <button
-                key={idx}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors group cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Folder className={`h-3.5 w-3.5 ${folder.color} opacity-80 group-hover:scale-105 transition-transform`} />
-                  <span className="truncate">{folder.name}</span>
-                </div>
-                <ChevronRight className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Bottom Panel (Space / Settings) */}
         <div className="border-t border-slate-200/50 pt-4 mt-auto">
           {/* Cloud Storage Usage */}
@@ -142,10 +129,10 @@ export default function Sidebar({
               <span className="flex items-center gap-1">
                 <HardDrive className="h-3 w-3 text-slate-400" /> Storage
               </span>
-              <span>12.4 MB / 100 MB</span>
+              <span>{formattedUsed} / {formattedLimit}</span>
             </div>
             <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
-              <div className="h-full bg-crimson rounded-full" style={{ width: "12.4%" }} />
+              <div className="h-full bg-crimson rounded-full transition-all duration-300" style={{ width: `${percentage}%` }} />
             </div>
           </div>
           
