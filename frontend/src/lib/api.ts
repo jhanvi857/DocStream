@@ -118,7 +118,9 @@ export async function fetchAPI<T = any>(path: string, options: RequestInit = {})
 
   // 2. Handle unauthorized error (Token expired)
   if (response.status === 401 && !isRefreshing) {
+    const isDocSession = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("doc");
     const refreshToken = getRefreshToken();
+    
     if (refreshToken) {
       isRefreshing = true;
       try {
@@ -143,10 +145,18 @@ export async function fetchAPI<T = any>(path: string, options: RequestInit = {})
             headers,
           });
         } else {
-          // Refresh token is expired or invalid, log out
+          // Refresh token is expired or invalid
           setSession(null);
-          if (typeof window !== "undefined") {
-            window.location.href = "/login";
+          if (isDocSession) {
+            headers.delete("Authorization");
+            response = await fetch(url, {
+              ...options,
+              headers,
+            });
+          } else {
+            if (typeof window !== "undefined") {
+              window.location.href = "/login";
+            }
           }
         }
       } catch (err) {
@@ -155,10 +165,18 @@ export async function fetchAPI<T = any>(path: string, options: RequestInit = {})
         isRefreshing = false;
       }
     } else {
-      // No refresh token available, log out
+      // No refresh token available
       setSession(null);
-      if (typeof window !== "undefined") {
-        window.location.href = "/login";
+      if (isDocSession) {
+        headers.delete("Authorization");
+        response = await fetch(url, {
+          ...options,
+          headers,
+        });
+      } else {
+        if (typeof window !== "undefined") {
+          window.location.href = "/login";
+        }
       }
     }
   }
