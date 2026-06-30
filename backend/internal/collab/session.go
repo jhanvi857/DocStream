@@ -162,6 +162,24 @@ func (s *Session) Join(client *Client) {
 	s.clients[client] = true
 	s.cursors[client.id] = 0 // Initialize cursor position
 	slog.Info("client joined session", "userID", client.userID, "docID", s.docID)
+
+	// Send presence of all existing clients to the joining client
+	for existingClient := range s.clients {
+		if existingClient.userID != client.userID {
+			color := GetDeterministicColor(existingClient.userID)
+			payload, _ := json.Marshal(ws.PresencePayload{
+				UserID:   existingClient.userID,
+				UserName: existingClient.userID,
+				Color:    color,
+				Action:   "join",
+			})
+			client.send <- ws.Message{
+				Type:    ws.MsgTypePresence,
+				DocID:   s.docID,
+				Payload: payload,
+			}
+		}
+	}
 	s.mu.Unlock()
 
 	// Broadcast Join Presence
