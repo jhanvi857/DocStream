@@ -23,7 +23,7 @@ import {
 
 export default function Home() {
   const router = useRouter();
-  const [activeView, setActiveView] = useState<"landing" | "dashboard" | "editor">("landing");
+  const [activeView, setActiveView] = useState<"landing" | "dashboard" | "editor" | "loading">("loading");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("mydocs");
@@ -35,6 +35,23 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Initialize view state based on query params and auth status on mount
+  useEffect(() => {
+    const token = getAccessToken();
+    const urlParams = new URLSearchParams(window.location.search);
+    const hasDocQuery = urlParams.has("doc");
+
+    if (hasDocQuery) {
+      setActiveView("loading");
+    } else if (token) {
+      setIsAuthenticated(true);
+      setActiveView("dashboard");
+    } else {
+      setIsAuthenticated(false);
+      setActiveView("landing");
+    }
+  }, []);
+
   // Authentication route guard
   useEffect(() => {
     const token = getAccessToken();
@@ -45,7 +62,7 @@ export default function Home() {
       setIsAuthenticated(true);
     } else {
       setIsAuthenticated(false);
-      if (activeView !== "landing" && !hasDocQuery) {
+      if (activeView !== "landing" && activeView !== "loading" && !hasDocQuery) {
         router.push("/login");
       }
     }
@@ -56,10 +73,25 @@ export default function Home() {
     const urlParams = new URLSearchParams(window.location.search);
     const docId = urlParams.get("doc");
     if (docId) {
+      let active = true;
+      const timer = setTimeout(() => {
+        if (active) {
+          setActiveView(current => {
+            if (current === "loading") {
+              alert("Connection timed out. Please try again.");
+              return "landing";
+            }
+            return current;
+          });
+        }
+      }, 10000); // 10 second timeout
+
       const fetchSharedDoc = async () => {
         try {
           const { getDocument } = await import("@/lib/api");
           const docData = await getDocument(docId);
+          if (!active) return;
+          clearTimeout(timer);
           const docItem: DocumentItem = {
             id: docData.id,
             title: docData.title,
@@ -74,18 +106,27 @@ export default function Home() {
           setDocuments([docItem]);
           setSelectedDocId(docId);
           setActiveView("editor");
-        } catch (err) {
+        } catch (err: any) {
+          if (!active) return;
+          clearTimeout(timer);
           console.error("Failed to load shared document on mount", err);
           const token = getAccessToken();
-          if (!token) {
+          
+          const errMsg = err.message?.toLowerCase() || "";
+          if (errMsg.includes("forbidden") || errMsg.includes("permission") || errMsg.includes("unauthorized") || errMsg.includes("401") || errMsg.includes("403")) {
+            alert("This document is private. Please sign in to request access.");
             router.push("/login" + window.location.search);
           } else {
-            alert("You do not have permission to access this document, or it does not exist.");
-            setActiveView("dashboard");
+            alert("Failed to load the document. It may have been deleted, or you may not have an active connection.");
+            setActiveView(token ? "dashboard" : "landing");
           }
         }
       };
       fetchSharedDoc();
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
     }
   }, []);
 
@@ -311,6 +352,17 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col bg-white">
       
+      {/* 0. LOADING VIEW */}
+      {activeView === "loading" && (
+        <div className="flex-1 flex flex-col items-center justify-center py-20 text-slate-400">
+          <svg className="animate-spin h-8 w-8 text-crimson mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          <p className="text-xs font-semibold">Loading DocStream...</p>
+        </div>
+      )}
+
       {/* 1. LANDING PAGE VIEW */}
       {activeView === "landing" && (
         <div className="flex flex-col flex-1">
