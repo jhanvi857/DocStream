@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { 
   ArrowLeft, Bold, Italic, Underline, List, Heading1, Heading2, 
   MessageSquare, Star, Lock, Globe, CheckCircle, Clock, Users, ShieldAlert
@@ -81,8 +81,20 @@ export default function EditorPreview({
   const [activeTab, setActiveTab] = useState<"outline" | "history">("outline");
   
   // Real-Time States
-  const [collaborators, setCollaborators] = useState<Array<{ userID: string; userName: string; color: string }>>([]);
-  const [remoteCursors, setRemoteCursors] = useState<Record<string, { name: string; color: string; position: number }>>({});
+  const [collaborators, setCollaborators] = useState<Array<{ userID: string; userName: string; color: string; position?: number | null }>>([]);
+  const remoteCursors = useMemo(() => {
+    const cursors: Record<string, { name: string; color: string; position: number }> = {};
+    collaborators.forEach(c => {
+      if (c.position !== undefined && c.position !== null) {
+        cursors[c.userID] = {
+          name: c.userName,
+          color: c.color,
+          position: c.position
+        };
+      }
+    });
+    return cursors;
+  }, [collaborators]);
   const [cursorCoords, setCursorCoords] = useState<Record<string, { top: number; left: number; name: string; color: string }>>({});
   const [historyOps, setHistoryOps] = useState<HistoryOp[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
@@ -305,20 +317,11 @@ export default function EditorPreview({
             setCollaborators(prev => {
               if (presence.action === "join") {
                 if (prev.some(c => c.userID === presence.user_id)) return prev;
-                return [...prev, { userID: presence.user_id, userName: presence.user_name, color: presence.color }];
+                return [...prev, { userID: presence.user_id, userName: presence.user_name, color: presence.color, position: null }];
               } else {
                 return prev.filter(c => c.userID !== presence.user_id);
               }
             });
-
-            // Clean up cursor mapping on leave
-            if (presence.action === "leave") {
-              setRemoteCursors(prev => {
-                const next = { ...prev };
-                delete next[presence.user_id];
-                return next;
-              });
-            }
             break;
           }
 
@@ -326,14 +329,19 @@ export default function EditorPreview({
             const cursor = msg.payload;
             if (cursor.user_id === userIDRef.current) return;
 
-            setRemoteCursors(prev => ({
-              ...prev,
-              [cursor.user_id]: {
-                name: cursor.user_name,
-                color: cursor.color,
-                position: cursor.position
+            setCollaborators(prev => {
+              const exists = prev.some(c => c.userID === cursor.user_id);
+              if (exists) {
+                return prev.map(c => c.userID === cursor.user_id ? { ...c, position: cursor.position } : c);
+              } else {
+                return [...prev, {
+                  userID: cursor.user_id,
+                  userName: cursor.user_name,
+                  color: cursor.color,
+                  position: cursor.position
+                }];
               }
-            }));
+            });
             break;
           }
 
@@ -354,17 +362,20 @@ export default function EditorPreview({
     ws.onclose = () => {
       if (wsRef.current !== ws) return;
       setWsConnected(false);
+      setCollaborators([]);
     };
 
     ws.onerror = (err) => {
       if (wsRef.current !== ws) return;
       console.error("WebSocket connection error:", err);
       setWsConnected(false);
+      setCollaborators([]);
     };
 
     return () => {
       ws.close();
       wsRef.current = null;
+      setCollaborators([]);
     };
   }, [doc.id]);
 
@@ -551,7 +562,9 @@ export default function EditorPreview({
 
     setSaveStatus("saving");
 
-    const newHtml = editorRef.current.innerHTML;
+    let newHtml = editorRef.current.innerHTML;
+    // Normalize HTML spaces to prevent browser-inserted &nbsp; entity from causing diff mismatch
+    newHtml = newHtml.replace(/&nbsp;/gi, "\u00A0");
     const oldHtml = crdtRef.current.toText();
 
     if (newHtml === oldHtml) {
