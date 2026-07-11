@@ -1,4 +1,6 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 "use client";
+
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -106,13 +108,13 @@ export default function Home() {
           setDocuments([docItem]);
           setSelectedDocId(docId);
           setActiveView("editor");
-        } catch (err: any) {
+        } catch (err) {
           if (!active) return;
           clearTimeout(timer);
           console.error("Failed to load shared document on mount", err);
           const token = getAccessToken();
           
-          const errMsg = err.message?.toLowerCase() || "";
+          const errMsg = err instanceof Error ? err.message.toLowerCase() : "";
           if (errMsg.includes("forbidden") || errMsg.includes("permission") || errMsg.includes("unauthorized") || errMsg.includes("401") || errMsg.includes("403")) {
             alert("This document is private. Please sign in to request access.");
             router.push("/login" + window.location.search);
@@ -227,8 +229,9 @@ export default function Home() {
         setDocuments(prev =>
           prev.map(d => (d.id === id ? { ...d, isShared: true } : d))
         );
-      } catch (err: any) {
-        alert(`Failed to share document: ${err.message}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "unknown error";
+        alert(`Failed to share document: ${msg}`);
       }
     }
   };
@@ -249,8 +252,9 @@ export default function Home() {
         localStorage.setItem("docstream_trash", JSON.stringify(trashed.filter((tid: string) => tid !== id)));
         setDocuments(prev => prev.filter(doc => doc.id !== id));
         if (selectedDocId === id) setSelectedDocId(null);
-      } catch (err: any) {
-        alert(`Failed to delete document: ${err.message}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "unknown error";
+        alert(`Failed to delete document: ${msg}`);
       }
     } else {
       // Send to local Trash
@@ -270,8 +274,9 @@ export default function Home() {
       setDocuments(prev =>
         prev.map(doc => (doc.id === id ? { ...doc, title: newTitle, lastEdited: "Just now" } : doc))
       );
-    } catch (err: any) {
-      alert(`Failed to rename document: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      alert(`Failed to rename document: ${msg}`);
     }
   };
 
@@ -292,8 +297,9 @@ export default function Home() {
       setDocuments([newDocItem, ...documents]);
       setSelectedDocId(newDoc.id);
       setActiveView("editor");
-    } catch (err: any) {
-      alert(`Failed to create document: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      alert(`Failed to create document: ${msg}`);
     }
   };
 

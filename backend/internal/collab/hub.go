@@ -10,6 +10,8 @@ import (
 	"docstream/internal/document"
 	"docstream/internal/version"
 	"docstream/internal/ws"
+
+	"nhooyr.io/websocket"
 )
 
 // bind a Client source with its raw ws.Message envelope.
@@ -50,21 +52,15 @@ func (h *Hub) Run() {
 		case client := <-h.register:
 			// Ensure session is created synchronously in the main loop to avoid race conditions
 			session := h.GetOrCreateSession(client.docID)
-			go func() {
-				// Block until the database loader finishes loading snapshot and ops
-				<-session.loadedChan
-				session.Join(client)
-			}()
+			session.Join(client)
 
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if session, ok := h.sessions[client.docID]; ok {
 				session.Leave(client)
 				// Clean up empty sessions and terminate Redis subscription to free memory
-				if len(session.clients) == 0 {
-					if session.cancelSub != nil {
-						session.cancelSub()
-					}
+				if session.IsEmpty() {
+					session.Close()
 					delete(h.sessions, client.docID)
 					close(session.opsChan)
 					slog.Info("session closed (no active clients)", "docID", client.docID)
@@ -105,7 +101,8 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 		}
 
 		if err := session.ApplyOp(hm.ctx, op, hm.client); err != nil {
-			slog.Error("failed to apply CRDT operation", "error", err, "docID", session.docID)
+			slog.Error("failed to apply CRDT operation, disconnecting client", "error", err, "docID", session.docID)
+			_ = hm.client.conn.Close(websocket.StatusPolicyViolation, "crdt synchronization desync")
 		}
 
 	case ws.MsgTypeCursor:

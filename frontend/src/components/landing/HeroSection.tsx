@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { ArrowRight, Play, CheckCircle2, MessageSquare, Shield, History, Sparkles } from "lucide-react";
+import { ArrowRight, Play, CheckCircle2, MessageSquare, Shield, Sparkles } from "lucide-react";
 
 interface HeroSectionProps {
   onGetStarted: () => void;
@@ -181,7 +181,7 @@ export default function HeroSection({ onGetStarted, onWatchDemo, isAuthenticated
                   <span className="text-[9px] text-slate-400">1m ago</span>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-normal">
-                  "I love the clean direction! Let's highlight the primary accent color more here."
+                  &quot;I love the clean direction! Let&apos;s highlight the primary accent color more here.&quot;
                 </p>
                 <div className="flex items-center gap-1 text-[9px] font-semibold text-crimson mt-0.5">
                   <MessageSquare className="h-2.5 w-2.5" />

@@ -41,7 +41,7 @@ type Op struct {
 func (d *CRDTDoc) Apply(op Op) error {
 	switch op.OpType {
 	case "insert":
-		d.Insert(op)
+		return d.Insert(op)
 	case "delete":
 		d.Delete(op)
 	default:
@@ -50,11 +50,11 @@ func (d *CRDTDoc) Apply(op Op) error {
 	return nil
 }
 
-func (d *CRDTDoc) Insert(op Op) {
+func (d *CRDTDoc) Insert(op Op) error {
 	// Prevent duplicate applications of the same operation ID
 	for _, c := range d.Chars {
 		if c.ID == op.CharID {
-			return
+			return nil
 		}
 	}
 
@@ -74,9 +74,9 @@ func (d *CRDTDoc) Insert(op Op) {
 				break
 			}
 		}
-		// Fallback if the requested parent ID is missing
+		// Return an error if the requested parent ID is missing (causes desync)
 		if insertIdx == -1 {
-			insertIdx = len(d.Chars) - 1
+			return fmt.Errorf("parent char ID %s not found for insertion of %s", op.AfterID, op.CharID)
 		}
 	}
 
@@ -106,6 +106,7 @@ func (d *CRDTDoc) Insert(op Op) {
 	d.Chars = append(d.Chars, nil)
 	copy(d.Chars[scanIdx+1:], d.Chars[scanIdx:])
 	d.Chars[scanIdx] = newChar
+	return nil
 }
 
 // Delete marks a character node as a tombstone.

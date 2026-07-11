@@ -94,6 +94,7 @@ export function setSession(data: AuthResponse | null) {
 let isRefreshing = false;
 
 // Custom wrapper around native fetch that handles JWT attachment, 401 intercepting, and token refresh
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function fetchAPI<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
   const headers = new Headers(options.headers || {});

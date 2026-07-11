@@ -106,7 +106,7 @@ func TestWebSocket_Collaboration(t *testing.T) {
 	go hub.Run()
 
 	docService := &mockDocService{}
-	wsHandler := NewHandler(hub, docService, tokenManager)
+	wsHandler := NewHandler(hub, docService, tokenManager, "*")
 
 	// 2. Setup http test server
 	r := chi.NewRouter()

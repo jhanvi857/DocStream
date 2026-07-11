@@ -142,7 +142,7 @@ func main() {
 
 	authHandler := auth.NewHandler(authService)
 	docHandler := document.NewHandler(docService)
-	wsHandler := collab.NewHandler(hub, docService, tokenManager)
+	wsHandler := collab.NewHandler(hub, docService, tokenManager, cfg.AllowedOrigin)
 	typeaheadHandler := typeahead.NewHandler(typeaheadService, docService, hub)
 
 	// Initialize rate limiter (100 requests per 1 minute)
@@ -207,7 +207,6 @@ func main() {
 		r.Get("/suggest/titles", typeaheadHandler.SuggestTitles)
 		r.Get("/documents/{id}/mentions/suggest", typeaheadHandler.SuggestMentions)
 		r.Post("/documents/{id}/mentions/select", typeaheadHandler.SelectMention)
-		r.Get("/documents/{id}/suggest", typeaheadHandler.SuggestWords)
 	})
 
 	// Document REST routes (using OptionalAuthMiddleware to support guest access for public sharing)
@@ -217,6 +216,7 @@ func main() {
 		r.Get("/documents/{id}", docHandler.Get)
 		r.Patch("/documents/{id}", docHandler.Update)
 		r.Get("/documents/{id}/history", docHandler.History)
+		r.Get("/documents/{id}/suggest", typeaheadHandler.SuggestWords)
 	})
 
 	// WebSocket upgrade endpoint (validates token inside query parameters)

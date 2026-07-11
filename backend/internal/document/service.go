@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"docstream/internal/crdt"
@@ -356,6 +357,7 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 					}
 				}
 				if insertIdx == -1 {
+					slog.Error("History log replay: parent char ID not found, using end of document as fallback", "afterID", op.AfterID, "charID", op.CharID, "docID", docID)
 					insertIdx = len(chars) - 1
 				}
 			}

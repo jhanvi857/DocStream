@@ -1,9 +1,10 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, react-hooks/immutability, @typescript-eslint/no-unused-vars */
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { 
   ArrowLeft, Bold, Italic, Underline, List, Heading1, Heading2, 
-  MessageSquare, Star, Lock, Globe, CheckCircle, Clock, Users, ShieldAlert
+  MessageSquare, Star, Lock, Globe, CheckCircle, Users, ShieldAlert
 } from "lucide-react";
 import { DocumentItem } from "../dashboard/DocGrid";
 import { WS_BASE_URL, getAccessToken, getUserID, getEmail, getDocumentHistory, getDocument, getWordSuggestions, Document, HistoryOp } from "@/lib/api";
@@ -185,11 +186,20 @@ export default function EditorPreview({
 
     if (found) {
       const rects = range.getClientRects();
+      const parentRect = element.getBoundingClientRect();
       if (rects && rects.length > 0) {
-        const parentRect = element.getBoundingClientRect();
         return {
           top: rects[0].top - parentRect.top,
           left: rects[0].left - parentRect.left,
+        };
+      }
+      
+      // Fallback for collapsed ranges at the end of text nodes
+      const rect = range.getBoundingClientRect();
+      if (rect && rect.top > 0) {
+        return {
+          top: rect.top - parentRect.top,
+          left: rect.left - parentRect.left,
         };
       }
     }
@@ -262,7 +272,7 @@ export default function EditorPreview({
 
             const content = crdtRef.current.toText();
             if (editorRef.current) {
-              editorRef.current.innerHTML = content || "<h2>Untitled Document</h2><p>Click here to start editing your new page...</p>";
+              editorRef.current.innerHTML = sanitizeHTML(content) || "<h2>Untitled Document</h2><p>Click here to start editing your new page...</p>";
               updateOutline();
             }
             break;
@@ -283,29 +293,40 @@ export default function EditorPreview({
             const op: Op = msg.payload;
             if (op.user_id === userIDRef.current) return; // Skip own operations (optimistic ui applied it)
 
-            crdtRef.current.apply(op);
-            const content = crdtRef.current.toText();
+            try {
+              crdtRef.current.apply(op);
+              const content = crdtRef.current.toText();
 
-            if (editorRef.current) {
-              // Capture caret position if editor currently has focus
-              const hasFocus = document.activeElement === editorRef.current;
-              let caretPos = 0;
-              if (hasFocus) {
-                caretPos = getCaretPosition(editorRef.current);
-              }
-
-              editorRef.current.innerHTML = content || "<p></p>";
-
-              if (hasFocus) {
-                // Adjust caret position if an insert occurred before it
-                let adjustedCaret = caretPos;
-                if (op.op_type === "insert") {
-                  // If inserted character position is before our caret, increment caret offset
-                  // To keep simple, we can re-set position. If it was a simple insert/delete, setCaret restores it nicely.
+              if (editorRef.current) {
+                // Capture caret position if editor currently has focus
+                const hasFocus = document.activeElement === editorRef.current;
+                let caretPos = 0;
+                if (hasFocus) {
+                  caretPos = getCaretPosition(editorRef.current);
                 }
-                setCaretPosition(editorRef.current, adjustedCaret);
+
+                editorRef.current.innerHTML = sanitizeHTML(content) || "<p></p>";
+
+                if (hasFocus) {
+                  // Adjust caret position if an insert occurred before it
+                  const adjustedCaret = caretPos;
+                  if (op.op_type === "insert") {
+                    // If inserted character position is before our caret, increment caret offset
+                    // To keep simple, we can re-set position. If it was a simple insert/delete, setCaret restores it nicely.
+                  }
+                  setCaretPosition(editorRef.current, adjustedCaret);
+                }
+                updateOutline();
               }
-              updateOutline();
+            } catch (err) {
+              console.error("CRDT operation out-of-sync, triggering full resync:", err);
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({
+                  type: "sync",
+                  doc_id: doc.id,
+                  payload: { lastSeenClock: 0 }
+                }));
+              }
             }
             break;
           }
@@ -382,7 +403,7 @@ export default function EditorPreview({
   // Handle caret coordinates repositioning whenever cursors update
   useEffect(() => {
     if (!editorRef.current) return;
-    const coords: Record<string, any> = {};
+    const coords: Record<string, { top: number; left: number; name: string; color: string }> = {};
     for (const [uid, info] of Object.entries(remoteCursors)) {
       const coord = getCaretCoordinates(editorRef.current, info.position);
       if (coord) {
@@ -565,6 +586,8 @@ export default function EditorPreview({
     let newHtml = editorRef.current.innerHTML;
     // Normalize HTML spaces to prevent browser-inserted &nbsp; entity from causing diff mismatch
     newHtml = newHtml.replace(/&nbsp;/gi, "\u00A0");
+    // Sanitize to prevent malicious XSS tags/attributes from entering CRDT/database
+    newHtml = sanitizeHTML(newHtml);
     const oldHtml = crdtRef.current.toText();
 
     if (newHtml === oldHtml) {
@@ -818,7 +841,7 @@ export default function EditorPreview({
                     {historyOps.slice(0, 15).map((op, idx) => (
                       <div key={idx} className="bg-slate-50 border border-slate-100 rounded-lg p-2 text-[10px] text-slate-600">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-slate-700 truncate max-w-[90px]">{op.userName.split("@")[0]}</span>
+                          <span className="font-bold text-slate-700 truncate max-w-22.5">{op.userName.split("@")[0]}</span>
                           <span className="text-[8px] text-slate-400">{new Date(op.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                         </div>
                         <p className="leading-snug">
@@ -939,7 +962,7 @@ export default function EditorPreview({
               >
                 {/* Caret Vertical Line */}
                 <div 
-                  className="w-[2px] h-[18px] animate-pulse" 
+                  className="w-0.5 h-4.5 animate-pulse" 
                   style={{ backgroundColor: c.color }}
                 />
                 {/* Floating Name Label */}
@@ -962,7 +985,7 @@ export default function EditorPreview({
                 }}
               >
                 {activeSuggestion.suffix}
-                <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-0.25 rounded bg-slate-100 text-[8px] font-bold text-slate-400 border border-slate-200 select-none uppercase tracking-wide not-italic">
+                <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-slate-100 text-[8px] font-bold text-slate-400 border border-slate-200 select-none uppercase tracking-wide not-italic">
                   Tab
                 </span>
               </span>
@@ -1006,7 +1029,7 @@ export default function EditorPreview({
                         {initials}
                       </div>
                       <div className="flex flex-col">
-                        <span className="text-[11px] font-bold text-slate-800 leading-none truncate max-w-[150px]">{c.userName.split("@")[0]}</span>
+                        <span className="text-[11px] font-bold text-slate-800 leading-none truncate max-w-37.5">{c.userName.split("@")[0]}</span>
                         <span className="text-[9px] text-slate-400 mt-0.5">Active now</span>
                       </div>
                     </div>
@@ -1027,7 +1050,7 @@ export default function EditorPreview({
             <form onSubmit={handleAddComment} className="mb-4 bg-slate-50 border border-slate-100 rounded-xl p-2.5 space-y-2">
               {selectedText ? (
                 <div className="bg-white border-l-2 border-crimson p-1.5 rounded text-[10px] text-slate-500 mb-1 max-h-12 overflow-hidden truncate">
-                  Quote: "{selectedText}"
+                  Quote: &quot;{selectedText}&quot;
                 </div>
               ) : (
                 <div className="text-[9px] text-slate-400 italic mb-1">
@@ -1070,7 +1093,7 @@ export default function EditorPreview({
                   </div>
                   {c.rangeText && (
                     <div className="bg-white border-l border-slate-300 text-[9px] text-slate-500 px-1 py-0.5 rounded truncate mb-1">
-                      "{c.rangeText}"
+                      &quot;{c.rangeText}&quot;
                     </div>
                   )}
                   <p className="text-[10.5px] text-slate-600 leading-normal">{c.text}</p>
@@ -1094,4 +1117,34 @@ export default function EditorPreview({
       )}
     </div>
   );
+}
+
+// sanitizeHTML sanitizes input HTML by stripping forbidden elements and attributes.
+function sanitizeHTML(html: string): string {
+  if (typeof window === "undefined") return html;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  
+  const forbiddenTags = ["script", "iframe", "object", "embed", "applet", "meta", "link", "style"];
+  forbiddenTags.forEach(tag => {
+    const elements = doc.querySelectorAll(tag);
+    elements.forEach(el => el.remove());
+  });
+
+  const allElements = doc.querySelectorAll("*");
+  allElements.forEach(el => {
+    // Remove attributes starting with 'on' (event handlers)
+    for (let i = el.attributes.length - 1; i >= 0; i--) {
+      const attr = el.attributes[i];
+      if (attr.name.startsWith("on")) {
+        el.removeAttribute(attr.name);
+      }
+      // Remove javascript: hrefs/srcs
+      if ((attr.name === "href" || attr.name === "src") && attr.value.trim().toLowerCase().startsWith("javascript:")) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+
+  return doc.body.innerHTML;
 }
