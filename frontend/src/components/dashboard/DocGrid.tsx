@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { FileText, MoreVertical, Star, Trash, Edit3, Share2, Eye, EyeOff, Globe } from "lucide-react";
+import { FileText, MoreVertical, Star, Trash, Edit3, Share2, EyeOff, Globe } from "lucide-react";
 
 export interface Collaborator {
   name: string;

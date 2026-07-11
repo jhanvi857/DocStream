@@ -213,8 +213,10 @@ All typeahead mutation hooks (such as indexing new titles on creation or registe
 
 ## Production Hardening & Security
 
-- **Token Bucket Rate Limiting**: The server uses a custom thread-safe token bucket middleware, limiting clients to **100 requests per minute per IP address**.
-- **CORS Guards**: Preflight options and requests are restricted to the configured Next.js domain (`ALLOWED_ORIGIN`).
+- **Token Bucket Rate Limiting**: The server uses a custom thread-safe token bucket middleware, limiting clients to **100 requests per minute per IP address**. It includes a background cleanup goroutine that sweeps idle IP records every 10 minutes to prevent memory leaks (DoS protection).
+- **CORS Guards**: Preflight options and requests are restricted to the configured Next.js domain (`ALLOWED_ORIGIN`). Mirroring is dynamically performed for wildcard configurations (`*`) to ensure compatibility with credentialed requests without breaking browser security policies.
+- **Cross-Site WebSocket Hijacking (CSWSH) Protection**: Enforces origin checks during WebSocket handshakes against the configured `AllowedOrigin` using `websocket.AcceptOptions{OriginPatterns}`. Bypassing checks via `InsecureSkipVerify` is disabled.
+- **Information Disclosure Prevention (CWE-209)**: Exposing raw SQL or internal database connection details via response payloads is blocked. Generic error responses are written to consumers, while detailed stack traces are securely written to the server's structured JSON logs (`slog.Error`).
 - **Request ID Tracking**: Chi injects a unique correlation ID (`X-Request-Id`) into request and response headers.
 - **Graceful Shutdown**: Catches termination signals (`SIGINT`, `SIGTERM`), halts the HTTP listener, drains active connection pumps, flushes Postgres connection pools, and closes Redis clients.
 

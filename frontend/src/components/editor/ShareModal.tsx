@@ -49,8 +49,9 @@ export default function ShareModal({ document: doc, onClose, onUpdateDocument }:
       await shareDocument(doc.id, inviteEmail.trim(), inviteRole);
       setSuccessMessage(`Successfully shared document with ${inviteEmail.trim()}!`);
       setInviteEmail("");
-    } catch (err: any) {
-      setErrorMessage(err.message || "Failed to invite collaborator");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to invite collaborator";
+      setErrorMessage(msg);
     } finally {
       setLoadingInvite(false);
     }
@@ -74,8 +75,9 @@ export default function ShareModal({ document: doc, onClose, onUpdateDocument }:
       setPublicEnabled(enabled);
       setPublicRole(role);
       setSuccessMessage("General access settings updated successfully!");
-    } catch (err: any) {
-      setErrorMessage(err.message || "Failed to update general access settings");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to update general access settings";
+      setErrorMessage(msg);
     } finally {
       setLoadingPublic(false);
     }

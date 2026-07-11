@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, CheckCircle2, LockKeyhole, Mail, Sparkles, AlertCircle, Loader2 } from "lucide-react";
+import { ArrowRight, LockKeyhole, Mail, Sparkles, AlertCircle, Loader2 } from "lucide-react";
 import { login, register } from "@/lib/api";
 
 type AuthMode = "login" | "signup";
@@ -68,8 +68,9 @@ export default function AuthPage({ mode }: AuthPageProps) {
       
       // Redirect to home (which will route to the authenticated dashboard view)
       router.push("/" + window.location.search);
-    } catch (err: any) {
-      setError(err.message || "An authentication error occurred.");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "An authentication error occurred.";
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }
