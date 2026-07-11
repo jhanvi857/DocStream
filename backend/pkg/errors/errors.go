@@ -2,6 +2,7 @@ package errors
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 )
 
@@ -69,7 +70,8 @@ func NewConflictError(msg string) *AppError {
 }
 
 func NewInternalError(msg string) *AppError {
-	return NewAppError(http.StatusInternalServerError, ErrCodeInternal, msg)
+	slog.Error("Internal server error", "error", msg)
+	return NewAppError(http.StatusInternalServerError, ErrCodeInternal, "An internal server error occurred")
 }
 
 func NewBadRequestError(msg string) *AppError {
