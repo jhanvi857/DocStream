@@ -567,3 +567,20 @@ func extractWords(text string) []string {
 	}
 	return words
 }
+
+// IsEmpty returns true if there are no clients currently in the session.
+func (s *Session) IsEmpty() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.clients) == 0
+}
+
+// Close safely cancels the Redis subscriber context if active.
+func (s *Session) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancelSub != nil {
+		s.cancelSub()
+		s.cancelSub = nil
+	}
+}
