@@ -63,9 +63,8 @@ export class CRDTDoc {
     let insertIdx = -1;
     if (op.after_id) {
       insertIdx = this.chars.findIndex(c => c.id === op.after_id);
-      // Fallback if parent not found
       if (insertIdx === -1) {
-        insertIdx = this.chars.length - 1;
+        throw new Error(`crdt: parent char ID ${op.after_id} not found for insertion of ${op.char_id}`);
       }
     }
 
