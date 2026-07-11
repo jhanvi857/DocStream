@@ -225,11 +225,8 @@ func (h *Handler) SelectMention(w http.ResponseWriter, r *http.Request) {
 
 // SuggestWords handles autocompleting local document words for inline autocomplete.
 func (h *Handler) SuggestWords(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.GetUserIDFromContext(r.Context())
-	if !ok {
-		pkgErrors.NewUnauthorizedError("unauthorized").WriteJSON(w)
-		return
-	}
+	// OptionalAuthMiddleware sets userID if token is valid, otherwise leaves it empty for guests
+	userID, _ := auth.GetUserIDFromContext(r.Context())
 
 	docID := chi.URLParam(r, "id")
 	if docID == "" {
