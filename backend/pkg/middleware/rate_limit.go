@@ -25,10 +25,29 @@ type RateLimiter struct {
 func NewRateLimiter(rateLimit int, window time.Duration) *RateLimiter {
 	capacity := float64(rateLimit)
 	refillRate := capacity / window.Seconds()
-	return &RateLimiter{
+	rl := &RateLimiter{
 		limiters:   make(map[string]*ipLimiter),
 		capacity:   capacity,
 		refillRate: refillRate,
+	}
+
+	// Start background cleanup routine to prevent memory leak
+	go rl.cleanupLoop()
+
+	return rl
+}
+
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, limiter := range rl.limiters {
+			if now.Sub(limiter.lastRefill) > 1*time.Hour {
+				delete(rl.limiters, ip)
+			}
+		}
+		rl.mu.Unlock()
 	}
 }
 

@@ -3,6 +3,7 @@ package collab
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"docstream/internal/auth"
 	"docstream/internal/document"
@@ -15,17 +16,19 @@ import (
 
 // Handler serves websocket upgrade requests.
 type Handler struct {
-	hub          *Hub
-	docService   document.Service
-	tokenManager *auth.TokenManager
+	hub           *Hub
+	docService    document.Service
+	tokenManager  *auth.TokenManager
+	allowedOrigin string
 }
 
 // NewHandler instantiates a WS Handler.
-func NewHandler(hub *Hub, docService document.Service, tokenManager *auth.TokenManager) *Handler {
+func NewHandler(hub *Hub, docService document.Service, tokenManager *auth.TokenManager, allowedOrigin string) *Handler {
 	return &Handler{
-		hub:          hub,
-		docService:   docService,
-		tokenManager: tokenManager,
+		hub:           hub,
+		docService:    docService,
+		tokenManager:  tokenManager,
+		allowedOrigin: allowedOrigin,
 	}
 }
 
@@ -71,8 +74,18 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Upgrade HTTP connection
+	var originPatterns []string
+	if h.allowedOrigin == "*" {
+		originPatterns = []string{"*"}
+	} else if h.allowedOrigin != "" {
+		cleaned := h.allowedOrigin
+		cleaned = strings.TrimPrefix(cleaned, "http://")
+		cleaned = strings.TrimPrefix(cleaned, "https://")
+		originPatterns = []string{cleaned}
+	}
+
 	opts := &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // Configured for flexible dev/prod proxying
+		OriginPatterns: originPatterns,
 	}
 
 	conn, err := websocket.Accept(w, r, opts)
