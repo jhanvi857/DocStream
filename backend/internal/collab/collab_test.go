@@ -102,10 +102,10 @@ func TestWebSocket_Collaboration(t *testing.T) {
 		version:  0,
 	}
 
-	hub := NewHub(mockVService, nil)
+	docService := &mockDocService{}
+	hub := NewHub(mockVService, nil, docService, tokenManager)
 	go hub.Run()
 
-	docService := &mockDocService{}
 	wsHandler := NewHandler(hub, docService, tokenManager, "*")
 
 	// 2. Setup http test server
@@ -232,5 +232,142 @@ func TestWebSocket_Collaboration(t *testing.T) {
 
 	if gotText != "a" {
 		t.Errorf("expected session text %q, got %q", "a", gotText)
+	}
+}
+
+func TestPresence_NoGuestOnAuth(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tokenManager := auth.NewTokenManager("access_secret_keys_test_only_mock_keys_1", "refresh_secret_keys_test_only_mock_keys_2")
+	tokens1, err := tokenManager.GeneratePair("user-auth-1", "user1@test.com")
+	if err != nil {
+		t.Fatalf("failed to generate access token 1: %v", err)
+	}
+	tokens2, err := tokenManager.GeneratePair("user-auth-2", "user2@test.com")
+	if err != nil {
+		t.Fatalf("failed to generate access token 2: %v", err)
+	}
+
+	mockVService := &mockVersionService{
+		ops:      make([]*version.Op, 0),
+		snapshot: []byte("[]"),
+		version:  0,
+	}
+	docService := &mockDocService{}
+	hub := NewHub(mockVService, nil, docService, tokenManager)
+	go hub.Run()
+
+	wsHandler := NewHandler(hub, docService, tokenManager, "*")
+	r := chi.NewRouter()
+	r.Get("/ws/document/{id}", wsHandler.ServeWS)
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	wsURL1 := strings.Replace(server.URL, "http://", "ws://", 1) + "/ws/document/doc-presence-1?token=" + tokens1.AccessToken
+	wsURL2 := strings.Replace(server.URL, "http://", "ws://", 1) + "/ws/document/doc-presence-1?token=" + tokens2.AccessToken
+
+	// Connect Client 1
+	c1, _, err := websocket.Dial(ctx, wsURL1, nil)
+	if err != nil {
+		t.Fatalf("Client 1 dial failed: %v", err)
+	}
+	defer c1.Close(websocket.StatusGoingAway, "")
+
+	// Connect Client 2
+	c2, _, err := websocket.Dial(ctx, wsURL2, nil)
+	if err != nil {
+		t.Fatalf("Client 2 dial failed: %v", err)
+	}
+	defer c2.Close(websocket.StatusGoingAway, "")
+
+	// Read presence on Client 2 for Client 1's connection
+	pMsg, err := readNextMsgOfType(ctx, c2, ws.MsgTypePresence)
+	if err != nil {
+		t.Fatalf("Client 2 failed to receive presence message: %v", err)
+	}
+
+	var pPayload ws.PresencePayload
+	if err := json.Unmarshal(pMsg.Payload, &pPayload); err != nil {
+		t.Fatalf("failed to unmarshal presence payload: %v", err)
+	}
+
+	if strings.HasPrefix(pPayload.UserID, "guest-") {
+		t.Errorf("expected authenticated user presence, but got guest entry: %s", pPayload.UserID)
+	}
+	if pPayload.UserID != "user-auth-1" {
+		t.Errorf("expected UserID user-auth-1, got %s", pPayload.UserID)
+	}
+}
+
+func TestPresence_PostHandshakeAuth(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tokenManager := auth.NewTokenManager("access_secret_keys_test_only_mock_keys_1", "refresh_secret_keys_test_only_mock_keys_2")
+	tokens, err := tokenManager.GeneratePair("user-postauth-2", "user2@test.com")
+	if err != nil {
+		t.Fatalf("failed to generate access token: %v", err)
+	}
+
+	mockVService := &mockVersionService{
+		ops:      make([]*version.Op, 0),
+		snapshot: []byte("[]"),
+		version:  0,
+	}
+	docService := &mockDocService{}
+	hub := NewHub(mockVService, nil, docService, tokenManager)
+	go hub.Run()
+
+	wsHandler := NewHandler(hub, docService, tokenManager, "*")
+	r := chi.NewRouter()
+	r.Get("/ws/document/{id}", wsHandler.ServeWS)
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	// Connect Client 1 WITHOUT token initially (simulating slow auth resolution)
+	noTokenURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/ws/document/doc-presence-2"
+	c1, _, err := websocket.Dial(ctx, noTokenURL, nil)
+	if err != nil {
+		t.Fatalf("Client 1 dial without token failed: %v", err)
+	}
+	defer c1.Close(websocket.StatusGoingAway, "")
+
+	// Connect Observer Client 2 WITH token to monitor presence events
+	tokenURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/ws/document/doc-presence-2?token=" + tokens.AccessToken
+	c2, _, err := websocket.Dial(ctx, tokenURL, nil)
+	if err != nil {
+		t.Fatalf("Client 2 dial with token failed: %v", err)
+	}
+	defer c2.Close(websocket.StatusGoingAway, "")
+
+	// Now Client 1 authenticates post-handshake over WebSocket
+	authMsg := ws.Message{
+		Type:  ws.MsgTypeAuth,
+		DocID: "doc-presence-2",
+		Payload: json.RawMessage(`{"token":"` + tokens.AccessToken + `"}`),
+	}
+	authBytes, _ := json.Marshal(authMsg)
+	if err := c1.Write(ctx, websocket.MessageText, authBytes); err != nil {
+		t.Fatalf("Client 1 failed to send auth message: %v", err)
+	}
+
+	// Read presence event on Client 2
+	pMsg, err := readNextMsgOfType(ctx, c2, ws.MsgTypePresence)
+	if err != nil {
+		t.Fatalf("Client 2 failed to receive presence message: %v", err)
+	}
+
+	var pPayload ws.PresencePayload
+	if err := json.Unmarshal(pMsg.Payload, &pPayload); err != nil {
+		t.Fatalf("failed to unmarshal presence payload: %v", err)
+	}
+
+	// Verify that Client 1 presence is announced under authenticated user-postauth-2, never guest
+	if strings.HasPrefix(pPayload.UserID, "guest-") {
+		t.Errorf("received guest presence event for authenticated client: %s", pPayload.UserID)
+	}
+	if pPayload.UserID != "user-postauth-2" {
+		t.Errorf("expected UserID user-postauth-2, got %s", pPayload.UserID)
 	}
 }

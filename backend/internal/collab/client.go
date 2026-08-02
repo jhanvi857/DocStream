@@ -20,24 +20,28 @@ const (
 
 // Client represents a connected user session on a specific document.
 type Client struct {
-	id     string
-	userID string
-	docID  string
-	conn   *websocket.Conn
-	send   chan ws.Message
-	hub    *Hub
-	role   document.Role
+	id            string
+	userID        string
+	docID         string
+	conn          *websocket.Conn
+	send          chan ws.Message
+	hub           *Hub
+	role          document.Role
+	isPendingAuth bool
+	isGuest       bool
 }
 
-func NewClient(userID, docID string, role document.Role, conn *websocket.Conn, hub *Hub) *Client {
+func NewClient(userID, docID string, role document.Role, isPendingAuth bool, conn *websocket.Conn, hub *Hub) *Client {
 	return &Client{
-		id:     uuid.New().String(),
-		userID: userID,
-		docID:  docID,
-		conn:   conn,
-		send:   make(chan ws.Message, 256),
-		hub:    hub,
-		role:   role,
+		id:            uuid.New().String(),
+		userID:        userID,
+		docID:         docID,
+		conn:          conn,
+		send:          make(chan ws.Message, 256),
+		hub:           hub,
+		role:          role,
+		isPendingAuth: isPendingAuth,
+		isGuest:       userID == "" || len(userID) >= 6 && userID[:6] == "guest-",
 	}
 }
 

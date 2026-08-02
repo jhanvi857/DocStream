@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"docstream/internal/crdt"
+	"docstream/internal/document"
 	"docstream/internal/version"
 	"docstream/internal/ws"
 	"docstream/pkg/trie"
@@ -156,16 +158,16 @@ func (s *Session) LoadState(ctx context.Context) error {
 	return nil
 }
 
-// register a client to the session and broadcast a join presence event.
+// register a client to the session and broadcast a join presence event (if auth is confirmed).
 func (s *Session) Join(client *Client) {
 	s.mu.Lock()
 	s.clients[client] = true
 	s.cursors[client.id] = 0 // Initialize cursor position
-	slog.Info("client joined session", "userID", client.userID, "docID", s.docID)
+	slog.Info("client joined session", "userID", client.userID, "docID", s.docID, "isPendingAuth", client.isPendingAuth)
 
-	// Send presence of all existing clients to the joining client
+	// Send presence of all existing authenticated clients to the joining client
 	for existingClient := range s.clients {
-		if existingClient.userID != client.userID {
+		if existingClient.userID != client.userID && !existingClient.isPendingAuth {
 			color := GetDeterministicColor(existingClient.userID)
 			payload, _ := json.Marshal(ws.PresencePayload{
 				UserID:   existingClient.userID,
@@ -180,13 +182,110 @@ func (s *Session) Join(client *Client) {
 			}
 		}
 	}
+	isPending := client.isPendingAuth
+	userID := client.userID
 	s.mu.Unlock()
 
-	// Broadcast Join Presence
-	color := GetDeterministicColor(client.userID)
+	// Only publish/broadcast JOIN presence if authentication is resolved
+	if !isPending {
+		color := GetDeterministicColor(userID)
+		if s.pubSub != nil {
+			_ = s.pubSub.SetPresence(context.Background(), s.docID, client.id, userID, userID, color)
+		}
+
+		payload, _ := json.Marshal(ws.PresencePayload{
+			UserID:   userID,
+			UserName: userID,
+			Color:    color,
+			Action:   "join",
+		})
+
+		s.Broadcast(ws.Message{
+			Type:    ws.MsgTypePresence,
+			DocID:   s.docID,
+			Payload: payload,
+		}, client)
+	}
+}
+
+// AuthenticateClient resolves pending/guest client identity post-handshake, reconciles guest presence, and announces the authenticated identity.
+func (s *Session) AuthenticateClient(ctx context.Context, client *Client, newUserID string, role document.Role) {
+	s.mu.Lock()
+	oldUserID := client.userID
+	wasPending := client.isPendingAuth
+	client.userID = newUserID
+	client.role = role
+	client.isPendingAuth = false
+	client.isGuest = false
+	s.mu.Unlock()
+
+	// Server-side Reconciliation Step:
+	// If a guest-prefixed identity was previously recorded in Redis presence set for this connection ID, delete it
+	if s.pubSub != nil {
+		staleGuestID, _ := s.pubSub.ReconcileGuestPresence(ctx, s.docID, client.id)
+		if staleGuestID != "" || strings.HasPrefix(oldUserID, "guest-") {
+			ghostID := staleGuestID
+			if ghostID == "" {
+				ghostID = oldUserID
+			}
+			// Broadcast LEAVE for the stale guest entry before the next presence snapshot is sent to other clients
+			leavePayload, _ := json.Marshal(ws.PresencePayload{
+				UserID:   ghostID,
+				UserName: ghostID,
+				Color:    GetDeterministicColor(ghostID),
+				Action:   "leave",
+			})
+			s.Broadcast(ws.Message{
+				Type:    ws.MsgTypePresence,
+				DocID:   s.docID,
+				Payload: leavePayload,
+			}, nil)
+		}
+
+		color := GetDeterministicColor(newUserID)
+		_ = s.pubSub.SetPresence(ctx, s.docID, client.id, newUserID, newUserID, color)
+	}
+
+	// Broadcast JOIN Presence for the authenticated identity
+	color := GetDeterministicColor(newUserID)
 	payload, _ := json.Marshal(ws.PresencePayload{
-		UserID:   client.userID,
-		UserName: client.userID,
+		UserID:   newUserID,
+		UserName: newUserID,
+		Color:    color,
+		Action:   "join",
+	})
+
+	var exclude *Client
+	if !wasPending {
+		exclude = client
+	}
+
+	s.Broadcast(ws.Message{
+		Type:    ws.MsgTypePresence,
+		DocID:   s.docID,
+		Payload: payload,
+	}, exclude)
+}
+
+// ConfirmGuest finalizes a guest identity for clients joining public documents without a token.
+func (s *Session) ConfirmGuest(ctx context.Context, client *Client) {
+	s.mu.Lock()
+	if !client.isPendingAuth {
+		s.mu.Unlock()
+		return
+	}
+	client.isPendingAuth = false
+	userID := client.userID
+	s.mu.Unlock()
+
+	color := GetDeterministicColor(userID)
+	if s.pubSub != nil {
+		_ = s.pubSub.SetPresence(ctx, s.docID, client.id, userID, userID, color)
+	}
+
+	payload, _ := json.Marshal(ws.PresencePayload{
+		UserID:   userID,
+		UserName: userID,
 		Color:    color,
 		Action:   "join",
 	})
@@ -201,6 +300,8 @@ func (s *Session) Join(client *Client) {
 // removes a client, purges in-memory cursor, and broadcasts a leave presence event.
 func (s *Session) Leave(client *Client) {
 	s.mu.Lock()
+	wasPending := client.isPendingAuth
+	userID := client.userID
 	if _, ok := s.clients[client]; ok {
 		delete(s.clients, client)
 		delete(s.cursors, client.id)
@@ -209,20 +310,26 @@ func (s *Session) Leave(client *Client) {
 	}
 	s.mu.Unlock()
 
-	// Broadcast Leave Presence
-	color := GetDeterministicColor(client.userID)
-	payload, _ := json.Marshal(ws.PresencePayload{
-		UserID:   client.userID,
-		UserName: client.userID,
-		Color:    color,
-		Action:   "leave",
-	})
+	if s.pubSub != nil {
+		_ = s.pubSub.RemovePresence(context.Background(), s.docID, client.id)
+	}
 
-	s.Broadcast(ws.Message{
-		Type:    ws.MsgTypePresence,
-		DocID:   s.docID,
-		Payload: payload,
-	}, client)
+	if !wasPending {
+		// Broadcast Leave Presence
+		color := GetDeterministicColor(userID)
+		payload, _ := json.Marshal(ws.PresencePayload{
+			UserID:   userID,
+			UserName: userID,
+			Color:    color,
+			Action:   "leave",
+		})
+
+		s.Broadcast(ws.Message{
+			Type:    ws.MsgTypePresence,
+			DocID:   s.docID,
+			Payload: payload,
+		}, client)
+	}
 }
 
 // update a client's cursor position and broadcasts it to session peers.

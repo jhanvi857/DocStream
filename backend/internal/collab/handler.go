@@ -68,8 +68,10 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If guest, assign a random guest ID
+	// If guest, assign a random guest ID and set isPendingAuth if token was omitted from handshake
+	isPendingAuth := false
 	if userID == "" {
+		isPendingAuth = (tokenStr == "")
 		userID = "guest-" + uuid.New().String()[:8]
 	}
 
@@ -95,7 +97,7 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Instantiate and register the Client
-	client := NewClient(userID, docID, role, conn, h.hub)
+	client := NewClient(userID, docID, role, isPendingAuth, conn, h.hub)
 	h.hub.register <- client
 
 	// 5. Spin up reader/writer routines

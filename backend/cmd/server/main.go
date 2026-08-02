@@ -137,7 +137,7 @@ func main() {
 	pubSub := collab.NewRedisPubSub(redisClient.Client, instanceID)
 
 	// Instantiate Collaboration Hub with Version service and Redis Pub/Sub
-	hub := collab.NewHub(versionService, pubSub)
+	hub := collab.NewHub(versionService, pubSub, docService, tokenManager)
 	go hub.Run()
 
 	authHandler := auth.NewHandler(authService)
