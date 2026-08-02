@@ -312,15 +312,22 @@ export default function EditorPreview({
                   caretPos = getCaretPosition(editorRef.current);
                 }
 
+                let adjustedCaret = caretPos;
+                if (op.op_type === "insert") {
+                  const activeChars = crdtRef.current.getActiveChars();
+                  const opIdx = activeChars.findIndex(c => c.id === op.char_id);
+                  if (opIdx !== -1 && opIdx <= caretPos) {
+                    adjustedCaret = caretPos + 1;
+                  }
+                } else if (op.op_type === "delete") {
+                  if (adjustedCaret > 0) {
+                    adjustedCaret = Math.max(0, caretPos - 1);
+                  }
+                }
+
                 editorRef.current.innerHTML = sanitizeHTML(content) || "<p></p>";
 
                 if (hasFocus) {
-                  // Adjust caret position if an insert occurred before it
-                  const adjustedCaret = caretPos;
-                  if (op.op_type === "insert") {
-                    // If inserted character position is before our caret, increment caret offset
-                    // To keep simple, we can re-set position. If it was a simple insert/delete, setCaret restores it nicely.
-                  }
                   setCaretPosition(editorRef.current, adjustedCaret);
                 }
                 updateOutline();
