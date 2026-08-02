@@ -139,3 +139,74 @@ func TestCRDTDoc_ConcurrentDescendantTree(t *testing.T) {
 		t.Errorf("doc2 failed tree convergence, got %q, want %q", doc2.ToText(), want)
 	}
 }
+
+func TestCRDT_ConcurrentInterleavedEditing(t *testing.T) {
+	// Root state: "Hello World"
+	rootOps := []Op{
+		{CharID: "r:1", Char: "H", AfterID: "", OpType: "insert"},
+		{CharID: "r:2", Char: "e", AfterID: "r:1", OpType: "insert"},
+		{CharID: "r:3", Char: "l", AfterID: "r:2", OpType: "insert"},
+		{CharID: "r:4", Char: "l", AfterID: "r:3", OpType: "insert"},
+		{CharID: "r:5", Char: "o", AfterID: "r:4", OpType: "insert"},
+		{CharID: "r:6", Char: " ", AfterID: "r:5", OpType: "insert"},
+		{CharID: "r:7", Char: "W", AfterID: "r:6", OpType: "insert"},
+		{CharID: "r:8", Char: "o", AfterID: "r:7", OpType: "insert"},
+		{CharID: "r:9", Char: "r", AfterID: "r:8", OpType: "insert"},
+		{CharID: "r:10", Char: "l", AfterID: "r:9", OpType: "insert"},
+		{CharID: "r:11", Char: "d", AfterID: "r:10", OpType: "insert"},
+	}
+
+	// Client A inserts " Beautiful" after "Hello"
+	opsA := []Op{
+		{CharID: "userA:1", Char: " ", AfterID: "r:5", OpType: "insert"},
+		{CharID: "userA:2", Char: "B", AfterID: "userA:1", OpType: "insert"},
+		{CharID: "userA:3", Char: "e", AfterID: "userA:2", OpType: "insert"},
+		{CharID: "userA:4", Char: "a", AfterID: "userA:3", OpType: "insert"},
+		{CharID: "userA:5", Char: "u", AfterID: "userA:4", OpType: "insert"},
+		{CharID: "userA:6", Char: "t", AfterID: "userA:5", OpType: "insert"},
+		{CharID: "userA:7", Char: "i", AfterID: "userA:6", OpType: "insert"},
+		{CharID: "userA:8", Char: "f", AfterID: "userA:7", OpType: "insert"},
+		{CharID: "userA:9", Char: "u", AfterID: "userA:8", OpType: "insert"},
+		{CharID: "userA:10", Char: "l", AfterID: "userA:9", OpType: "insert"},
+	}
+
+	// Client B inserts "!" after "World" and deletes "r:6" (the space)
+	opsB := []Op{
+		{CharID: "userB:1", Char: "!", AfterID: "r:11", OpType: "insert"},
+		{CharID: "r:6", OpType: "delete"},
+	}
+
+	// Document 1 receives Ops A then Ops B
+	doc1 := NewCRDTDoc()
+	for _, op := range rootOps {
+		_ = doc1.Apply(op)
+	}
+	for _, op := range opsA {
+		_ = doc1.Apply(op)
+	}
+	for _, op := range opsB {
+		_ = doc1.Apply(op)
+	}
+
+	// Document 2 receives Ops B then Ops A (out of order arrival)
+	doc2 := NewCRDTDoc()
+	for _, op := range rootOps {
+		_ = doc2.Apply(op)
+	}
+	for _, op := range opsB {
+		_ = doc2.Apply(op)
+	}
+	for _, op := range opsA {
+		_ = doc2.Apply(op)
+	}
+
+	text1 := doc1.ToText()
+	text2 := doc2.ToText()
+
+	if text1 != text2 {
+		t.Errorf("CRDT documents failed convergence!\ndoc1: %q\ndoc2: %q", text1, text2)
+	}
+	if text1 != "Hello BeautifulWorld!" {
+		t.Errorf("unexpected merged text: %q", text1)
+	}
+}

@@ -102,27 +102,8 @@ export class CRDTDoc {
   }
 }
 
-// Helper to tokenize an HTML string into individual text characters and HTML tags
-function tokenizeHTML(html: string): string[] {
-  const tokens: string[] = [];
-  let i = 0;
-  while (i < html.length) {
-    if (html[i] === '<') {
-      const closeIdx = html.indexOf('>', i);
-      if (closeIdx !== -1) {
-        tokens.push(html.slice(i, closeIdx + 1));
-        i = closeIdx + 1;
-        continue;
-      }
-    }
-    tokens.push(html[i]);
-    i++;
-  }
-  return tokens;
-}
-
-// Standard UUID v4 generator
-function generateUUID(): string {
+// Helper to generate a UUID v4
+export function generateUUID(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
@@ -133,7 +114,72 @@ function generateUUID(): string {
   });
 }
 
-// O(N) diffing algorithm using common prefix/suffix matching over tokens
+// Generate insert operations for a position in the active CRDT sequence
+export function generateInsertOps(
+  doc: CRDTDoc,
+  activeIndex: number,
+  textToInsert: string,
+  userID: string,
+  nextClock: () => number
+): Op[] {
+  const activeChars = doc.getActiveChars();
+  let afterID = "";
+  if (activeIndex > 0 && activeChars[activeIndex - 1]) {
+    afterID = activeChars[activeIndex - 1].id;
+  }
+
+  const normalized = textToInsert.replace(/&nbsp;/gi, "\u00A0");
+  const runes = Array.from(normalized);
+  const ops: Op[] = [];
+
+  for (const r of runes) {
+    const charID = `${userID}:${nextClock()}`;
+    ops.push({
+      id: generateUUID(),
+      doc_id: doc.docID,
+      user_id: userID,
+      op_type: "insert",
+      char_id: charID,
+      char: r,
+      after_id: afterID,
+      is_deleted: false,
+      created_at: new Date().toISOString()
+    });
+    afterID = charID;
+  }
+
+  return ops;
+}
+
+// Generate delete operations for a range of characters in the active CRDT sequence
+export function generateDeleteOps(
+  doc: CRDTDoc,
+  activeIndex: number,
+  lengthToDelete: number,
+  userID: string
+): Op[] {
+  const activeChars = doc.getActiveChars();
+  const deletedNodes = activeChars.slice(activeIndex, activeIndex + lengthToDelete);
+  const ops: Op[] = [];
+
+  for (const charNode of deletedNodes) {
+    ops.push({
+      id: generateUUID(),
+      doc_id: doc.docID,
+      user_id: userID,
+      op_type: "delete",
+      char_id: charNode.id,
+      char: "",
+      after_id: "",
+      is_deleted: true,
+      created_at: new Date().toISOString()
+    });
+  }
+
+  return ops;
+}
+
+// Plain-text rune-based diffing algorithm (converting &nbsp; to \u00A0 and operating per rune)
 export function diffAndGenerateOps(
   oldDoc: CRDTDoc,
   oldText: string,
@@ -141,15 +187,18 @@ export function diffAndGenerateOps(
   userID: string,
   nextClock: () => number
 ): Op[] {
-  const oldTokens = oldDoc.getActiveChars().map(c => c.char);
-  const newTokens = tokenizeHTML(newText);
+  const normalizedOld = oldText.replace(/&nbsp;/gi, "\u00A0");
+  const normalizedNew = newText.replace(/&nbsp;/gi, "\u00A0");
+
+  const oldRunes = Array.from(normalizedOld);
+  const newRunes = Array.from(normalizedNew);
 
   // Find common prefix length
   let prefixLen = 0;
   while (
-    prefixLen < oldTokens.length &&
-    prefixLen < newTokens.length &&
-    oldTokens[prefixLen] === newTokens[prefixLen]
+    prefixLen < oldRunes.length &&
+    prefixLen < newRunes.length &&
+    oldRunes[prefixLen] === newRunes[prefixLen]
   ) {
     prefixLen++;
   }
@@ -157,49 +206,33 @@ export function diffAndGenerateOps(
   // Find common suffix length
   let suffixLen = 0;
   while (
-    suffixLen < oldTokens.length - prefixLen &&
-    suffixLen < newTokens.length - prefixLen &&
-    oldTokens[oldTokens.length - 1 - suffixLen] === newTokens[newTokens.length - 1 - suffixLen]
+    suffixLen < oldRunes.length - prefixLen &&
+    suffixLen < newRunes.length - prefixLen &&
+    oldRunes[oldRunes.length - 1 - suffixLen] === newRunes[newRunes.length - 1 - suffixLen]
   ) {
     suffixLen++;
   }
 
-  const deletedTokens = oldTokens.slice(prefixLen, oldTokens.length - suffixLen);
-  const insertedTokens = newTokens.slice(prefixLen, newTokens.length - suffixLen);
+  const deletedCount = oldRunes.length - prefixLen - suffixLen;
+  const insertedRunes = newRunes.slice(prefixLen, newRunes.length - suffixLen);
 
   const ops: Op[] = [];
 
-  // 1. Generate Delete Operations
-  if (deletedTokens.length > 0) {
-    const activeChars = oldDoc.getActiveChars();
-    const deletedActiveChars = activeChars.slice(prefixLen, activeChars.length - suffixLen);
-
-    for (const charNode of deletedActiveChars) {
-      ops.push({
-        id: generateUUID(),
-        doc_id: oldDoc.docID,
-        user_id: userID,
-        op_type: "delete",
-        char_id: charNode.id,
-        char: "",
-        after_id: "",
-        is_deleted: true,
-        created_at: new Date().toISOString()
-      });
-    }
+  // 1. Delete Operations
+  if (deletedCount > 0) {
+    const deleteOps = generateDeleteOps(oldDoc, prefixLen, deletedCount, userID);
+    ops.push(...deleteOps);
   }
 
-  // 2. Generate Insert Operations
-  if (insertedTokens.length > 0) {
+  // 2. Insert Operations
+  if (insertedRunes.length > 0) {
     const activeChars = oldDoc.getActiveChars();
     let afterID = "";
     if (prefixLen > 0 && activeChars[prefixLen - 1]) {
       afterID = activeChars[prefixLen - 1].id;
     }
 
-    // Generate insert operation per token
-    for (let i = 0; i < insertedTokens.length; i++) {
-      const token = insertedTokens[i];
+    for (const r of insertedRunes) {
       const charID = `${userID}:${nextClock()}`;
       ops.push({
         id: generateUUID(),
@@ -207,12 +240,11 @@ export function diffAndGenerateOps(
         user_id: userID,
         op_type: "insert",
         char_id: charID,
-        char: token,
+        char: r,
         after_id: afterID,
         is_deleted: false,
         created_at: new Date().toISOString()
       });
-      // The subsequent tokens are chained sequentially
       afterID = charID;
     }
   }
