@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"docstream/internal/crdt"
 
@@ -48,3 +50,97 @@ func (rps *RedisPubSub) PublishOp(ctx context.Context, docID string, op crdt.Op)
 
 	return nil
 }
+
+// PresenceEntry represents a presence record stored in Redis.
+type PresenceEntry struct {
+	ConnID   string `json:"conn_id"`
+	UserID   string `json:"user_id"`
+	UserName string `json:"user_name"`
+	Color    string `json:"color"`
+}
+
+// SetPresence records or refreshes presence in Redis with a TTL.
+func (rps *RedisPubSub) SetPresence(ctx context.Context, docID, connID, userID, userName, color string) error {
+	if rps == nil || rps.client == nil {
+		return nil
+	}
+
+	entry := PresenceEntry{
+		ConnID:   connID,
+		UserID:   userID,
+		UserName: userName,
+		Color:    color,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+
+	hashKey := fmt.Sprintf("doc:%s:presence", docID)
+	if err := rps.client.HSet(ctx, hashKey, connID, string(data)).Err(); err != nil {
+		return err
+	}
+	// Expire the hash key automatically after 60s of inactivity
+	rps.client.Expire(ctx, hashKey, 60*time.Second)
+	return nil
+}
+
+// ReconcileGuestPresence removes any guest-prefixed presence entry associated with connID from Redis.
+// Returns the stale guest ID if one was found and removed.
+func (rps *RedisPubSub) ReconcileGuestPresence(ctx context.Context, docID, connID string) (string, error) {
+	if rps == nil || rps.client == nil {
+		return "", nil
+	}
+
+	hashKey := fmt.Sprintf("doc:%s:presence", docID)
+	val, err := rps.client.HGet(ctx, hashKey, connID).Result()
+	if err != nil {
+		return "", nil // No prior entry
+	}
+
+	var entry PresenceEntry
+	if err := json.Unmarshal([]byte(val), &entry); err != nil {
+		return "", nil
+	}
+
+	if strings.HasPrefix(entry.UserID, "guest-") {
+		// Delete the stale guest entry from Redis presence hash
+		rps.client.HDel(ctx, hashKey, connID)
+		return entry.UserID, nil
+	}
+
+	return "", nil
+}
+
+// RemovePresence purges presence for a connection ID from Redis.
+func (rps *RedisPubSub) RemovePresence(ctx context.Context, docID, connID string) error {
+	if rps == nil || rps.client == nil {
+		return nil
+	}
+
+	hashKey := fmt.Sprintf("doc:%s:presence", docID)
+	return rps.client.HDel(ctx, hashKey, connID).Err()
+}
+
+// GetActivePresence returns all active presence records for a document from Redis.
+func (rps *RedisPubSub) GetActivePresence(ctx context.Context, docID string) ([]PresenceEntry, error) {
+	if rps == nil || rps.client == nil {
+		return nil, nil
+	}
+
+	hashKey := fmt.Sprintf("doc:%s:presence", docID)
+	valMap, err := rps.client.HGetAll(ctx, hashKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]PresenceEntry, 0, len(valMap))
+	for _, val := range valMap {
+		var entry PresenceEntry
+		if err := json.Unmarshal([]byte(val), &entry); err == nil {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+

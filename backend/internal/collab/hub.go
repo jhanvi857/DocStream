@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"docstream/internal/auth"
 	"docstream/internal/crdt"
 	"docstream/internal/document"
 	"docstream/internal/version"
@@ -23,24 +24,28 @@ type hubMessage struct {
 
 // manage active document sessions and routes real-time communications.
 type Hub struct {
-	sessions   map[string]*Session
-	register   chan *Client
-	unregister chan *Client
-	operation  chan hubMessage
-	mu         sync.RWMutex
-	vService   version.Service
-	pubSub     *RedisPubSub
+	sessions     map[string]*Session
+	register     chan *Client
+	unregister   chan *Client
+	operation    chan hubMessage
+	mu           sync.RWMutex
+	vService     version.Service
+	pubSub       *RedisPubSub
+	docService   document.Service
+	tokenManager *auth.TokenManager
 }
 
 // initialize websocket Hub with required dependencies.
-func NewHub(vService version.Service, pubSub *RedisPubSub) *Hub {
+func NewHub(vService version.Service, pubSub *RedisPubSub, docService document.Service, tokenManager *auth.TokenManager) *Hub {
 	return &Hub{
-		sessions:   make(map[string]*Session),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		operation:  make(chan hubMessage),
-		vService:   vService,
-		pubSub:     pubSub,
+		sessions:     make(map[string]*Session),
+		register:     make(chan *Client),
+		unregister:   make(chan *Client),
+		operation:    make(chan hubMessage),
+		vService:     vService,
+		pubSub:       pubSub,
+		docService:   docService,
+		tokenManager: tokenManager,
 	}
 }
 
@@ -88,7 +93,31 @@ func (h *Hub) Run() {
 // handleSessionMessage processes a message sequentially for a specific session worker.
 func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 	switch hm.message.Type {
+	case ws.MsgTypeAuth:
+		var payload ws.AuthPayload
+		if err := json.Unmarshal(hm.message.Payload, &payload); err != nil {
+			slog.Error("failed to unmarshal auth payload", "error", err)
+			return
+		}
+		if payload.Token != "" && h.tokenManager != nil {
+			claims, err := h.tokenManager.ValidateAccessToken(payload.Token)
+			if err == nil && claims.UserID != "" {
+				role := document.RoleEditor
+				if h.docService != nil {
+					if r, err := h.docService.GetRole(hm.ctx, session.docID, claims.UserID); err == nil {
+						role = r
+					}
+				}
+				session.AuthenticateClient(hm.ctx, hm.client, claims.UserID, role)
+				slog.Info("client authenticated post-handshake", "userID", claims.UserID, "docID", session.docID)
+				return
+			}
+		}
+
 	case ws.MsgTypeOp:
+		if hm.client.isPendingAuth {
+			session.ConfirmGuest(hm.ctx, hm.client)
+		}
 		var op crdt.Op
 		if err := json.Unmarshal(hm.message.Payload, &op); err != nil {
 			slog.Error("failed to unmarshal op payload", "error", err)
@@ -106,6 +135,9 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 		}
 
 	case ws.MsgTypeCursor:
+		if hm.client.isPendingAuth {
+			session.ConfirmGuest(hm.ctx, hm.client)
+		}
 		var payload ws.CursorPayload
 		if err := json.Unmarshal(hm.message.Payload, &payload); err != nil {
 			slog.Error("failed to unmarshal cursor payload", "error", err)
@@ -114,6 +146,9 @@ func (h *Hub) handleSessionMessage(session *Session, hm hubMessage) {
 		session.HandleCursor(hm.ctx, hm.client, payload.Position)
 
 	case ws.MsgTypeSync:
+		if hm.client.isPendingAuth {
+			session.ConfirmGuest(hm.ctx, hm.client)
+		}
 		var payload ws.SyncPayload
 		if err := json.Unmarshal(hm.message.Payload, &payload); err != nil {
 			slog.Error("failed to unmarshal sync payload", "error", err)

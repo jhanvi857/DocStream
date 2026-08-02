@@ -14,6 +14,7 @@ const (
 	MsgTypeSyncComplete MessageType = "sync_complete"
 	MsgTypeAck          MessageType = "ack"
 	MsgTypeError        MessageType = "error"
+	MsgTypeAuth         MessageType = "auth"
 )
 
 // Message is the standard communication packet sent between Client and Server.
@@ -48,4 +49,9 @@ type SyncPayload struct {
 type SyncCompletePayload struct {
 	ServerClock int    `json:"serverClock"`
 	UserID      string `json:"user_id,omitempty"`
+}
+
+// payload sent when authenticating post-handshake over WebSocket.
+type AuthPayload struct {
+	Token string `json:"token"`
 }

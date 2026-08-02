@@ -249,6 +249,13 @@ export default function EditorPreview({
     ws.onopen = () => {
       if (wsRef.current !== ws) return;
       setWsConnected(true);
+      if (token) {
+        ws.send(JSON.stringify({
+          type: "auth",
+          doc_id: doc.id,
+          payload: { token }
+        }));
+      }
       // Initiate Sync handshake
       ws.send(JSON.stringify({
         type: "sync",
