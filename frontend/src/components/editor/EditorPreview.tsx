@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { 
   ArrowLeft, Bold, Italic, Underline, List, Heading1, Heading2, 
-  MessageSquare, Star, Lock, Globe, CheckCircle, Users, ShieldAlert
+  MessageSquare, Star, Lock, Globe, CheckCircle, Users, ShieldAlert, Trash2
 } from "lucide-react";
 import { DocumentItem } from "../dashboard/DocGrid";
 import { WS_BASE_URL, getAccessToken, getUserID, getEmail, getDocumentHistory, getDocument, getWordSuggestions, Document, HistoryOp } from "@/lib/api";
@@ -18,6 +18,7 @@ interface Comment {
   color: string;
   text: string;
   time: string;
+  createdAt?: string;
   rangeText?: string;
 }
 
@@ -98,6 +99,91 @@ export default function EditorPreview({
   }, [collaborators]);
   const [cursorCoords, setCursorCoords] = useState<Record<string, { top: number; left: number; name: string; color: string }>>({});
   const [historyOps, setHistoryOps] = useState<HistoryOp[]>([]);
+  const groupedHistoryOps = useMemo(() => {
+    if (!historyOps || historyOps.length === 0) return [];
+
+    // Sort ops chronologically (oldest first) to build text strings forward
+    const sortedOps = [...historyOps].sort((a, b) => {
+      const timeA = new Date(a.createdAt).getTime();
+      const timeB = new Date(b.createdAt).getTime();
+      const validA = isNaN(timeA) ? 0 : timeA;
+      const validB = isNaN(timeB) ? 0 : timeB;
+      return validA - validB;
+    });
+
+    const grouped: Array<{
+      userName: string;
+      opType: "insert" | "delete";
+      text: string;
+      count: number;
+      time: string;
+      isNewline?: boolean;
+    }> = [];
+
+    for (const op of sortedOps) {
+      // Basic validation: skip insert ops with empty character
+      if (op.opType === "insert" && !op.char) continue;
+
+      // Filter out raw HTML tag fragments if any
+      if (op.char && (op.char.includes("<") || op.char.includes(">"))) continue;
+
+      const date = new Date(op.createdAt);
+      const opTime = isNaN(date.getTime())
+        ? "Recently"
+        : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      // Clean non-breaking space / html entity fragments
+      let displayChar = op.char ? op.char.replace(/&nbsp;/gi, " ").replace(/amp;/gi, "") : "";
+      if (displayChar === "\u00A0") displayChar = " ";
+
+      const isNewlineOp = op.char === "\n" || op.char === "\r\n";
+      const opTypeNorm = op.opType === "delete" ? "delete" : "insert";
+      const rawUser = op.userName || op.userID || "Collaborator";
+      const userNameNorm = rawUser.includes("@") ? rawUser.split("@")[0] : rawUser;
+
+      const last = grouped[grouped.length - 1];
+
+      // Check if this op can merge into the previous active group
+      const canMerge =
+        last &&
+        last.userName === userNameNorm &&
+        last.opType === opTypeNorm &&
+        last.time === opTime;
+
+      if (canMerge) {
+        if (opTypeNorm === "delete") {
+          last.count++;
+        } else if (isNewlineOp && last.isNewline) {
+          last.count++;
+        } else if (!isNewlineOp && !last.isNewline && last.text.length < 80) {
+          last.text = last.text + displayChar;
+          last.count++;
+        } else {
+          // Cannot merge due to newline boundary or text length limit reached
+          grouped.push({
+            userName: userNameNorm,
+            opType: opTypeNorm,
+            text: isNewlineOp ? "Newline (↵)" : displayChar,
+            count: 1,
+            time: opTime,
+            isNewline: isNewlineOp,
+          });
+        }
+      } else {
+        grouped.push({
+          userName: userNameNorm,
+          opType: opTypeNorm,
+          text: isNewlineOp ? "Newline (↵)" : (opTypeNorm === "insert" ? displayChar : ""),
+          count: 1,
+          time: opTime,
+          isNewline: isNewlineOp,
+        });
+      }
+    }
+
+    // Reverse array so newest grouped activities appear at the top of the history feed
+    return grouped.reverse();
+  }, [historyOps]);
   const [wsConnected, setWsConnected] = useState(false);
 
   // Outline Generation State
@@ -300,6 +386,18 @@ export default function EditorPreview({
             const op: Op = msg.payload;
             if (op.user_id === userIDRef.current) return; // Skip own operations (optimistic ui applied it)
 
+            const senderName = collaborators.find(c => c.userID === op.user_id)?.userName || op.user_id;
+
+            // Optimistically append to local history ops log
+            setHistoryOps(prev => [...prev, {
+              opType: op.op_type,
+              char: op.char,
+              position: 0,
+              userID: op.user_id,
+              userName: senderName,
+              createdAt: op.created_at || new Date().toISOString()
+            }]);
+
             try {
               crdtRef.current.apply(op);
               const content = crdtRef.current.toText();
@@ -435,12 +533,16 @@ export default function EditorPreview({
   // Load document operation audit log from REST API
   const fetchHistoryLog = async () => {
     try {
-      const ops = await getDocumentHistory(doc.id, 0, 25);
+      const ops = await getDocumentHistory(doc.id, 0, 500);
       setHistoryOps(ops);
     } catch (err) {
       console.error("Failed to load history operations:", err);
     }
   };
+
+  useEffect(() => {
+    fetchHistoryLog();
+  }, [doc.id]);
 
   useEffect(() => {
     if (activeTab === "history") {
@@ -597,14 +699,12 @@ export default function EditorPreview({
 
     setSaveStatus("saving");
 
-    let newHtml = editorRef.current.innerHTML;
-    // Normalize HTML spaces to prevent browser-inserted &nbsp; entity from causing diff mismatch
-    newHtml = newHtml.replace(/&nbsp;/gi, "\u00A0");
-    // Sanitize to prevent malicious XSS tags/attributes from entering CRDT/database
-    newHtml = sanitizeHTML(newHtml);
-    const oldHtml = crdtRef.current.toText();
+    // Extract clean text from contenteditable DOM converting linebreaks to \n
+    const rawText = editorRef.current.innerText || editorRef.current.textContent || "";
+    const newText = rawText.replace(/\r\n/g, "\n").replace(/&nbsp;/gi, "\u00A0");
+    const oldText = crdtRef.current.toText();
 
-    if (newHtml === oldHtml) {
+    if (newText === oldText) {
       setSaveStatus("saved");
       return;
     }
@@ -612,8 +712,8 @@ export default function EditorPreview({
     // Generate local operations via character diffing
     const ops = diffAndGenerateOps(
       crdtRef.current,
-      oldHtml,
-      newHtml,
+      oldText,
+      newText,
       userIDRef.current,
       () => {
         clockRef.current++;
@@ -631,8 +731,22 @@ export default function EditorPreview({
       }));
     });
 
+    // Optimistically update history ops log in local state
+    const userEmail = getEmail() || "you@company.com";
+    const newHistoryEntries: HistoryOp[] = ops.map(op => ({
+      opType: op.op_type,
+      char: op.char,
+      position: 0,
+      userID: userIDRef.current,
+      userName: userEmail.split("@")[0],
+      createdAt: new Date().toISOString()
+    }));
+    if (newHistoryEntries.length > 0) {
+      setHistoryOps(prev => [...prev, ...newHistoryEntries]);
+    }
+
     // Notify parent component about state updates
-    onUpdateContent(doc.id, newHtml);
+    onUpdateContent(doc.id, newText);
     updateOutline();
 
     // Trigger saved status timer
@@ -686,19 +800,34 @@ export default function EditorPreview({
     handleInput();
   };
 
+  // Format comment creation/relative time
+  const formatCommentDisplayTime = (c: Comment) => {
+    if (c.createdAt) {
+      const date = new Date(c.createdAt);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + " at " + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+    return c.time && c.time !== "Just now" ? c.time : "Recently";
+  };
+
   // Handle comments
   const handleAddComment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCommentText.trim()) return;
 
     const email = getEmail() || "you@company.com";
+    const now = new Date();
+    const formattedTime = now.toLocaleDateString([], { month: 'short', day: 'numeric' }) + " at " + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
     const newComment: Comment = {
       id: Date.now().toString(),
       author: email.split("@")[0],
       avatar: email.substring(0, 2).toUpperCase(),
       color: "bg-slate-700",
       text: newCommentText.trim(),
-      time: "Just now",
+      time: formattedTime,
+      createdAt: now.toISOString(),
       rangeText: selectedText || undefined
     };
 
@@ -708,6 +837,17 @@ export default function EditorPreview({
 
     setNewCommentText("");
     setSelectedText("");
+  };
+
+  const handleDeleteComment = (commentId: string) => {
+    const updated = comments.filter(c => c.id !== commentId);
+    setComments(updated);
+    localStorage.setItem(`docstream_comments_${doc.id}`, JSON.stringify(updated));
+  };
+
+  const handleClearAllComments = () => {
+    setComments([]);
+    localStorage.removeItem(`docstream_comments_${doc.id}`);
   };
 
   // Smooth scroll helper for Table of Contents anchors
@@ -848,23 +988,31 @@ export default function EditorPreview({
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Activity Log</span>
                   <button onClick={fetchHistoryLog} className="text-[9px] font-bold text-crimson hover:underline cursor-pointer">Reload</button>
                 </div>
-                {historyOps.length === 0 ? (
+                {groupedHistoryOps.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic p-2">No editing logs found.</p>
                 ) : (
                   <div className="space-y-2">
-                    {historyOps.slice(0, 15).map((op, idx) => (
+                    {groupedHistoryOps.slice(0, 30).map((entry, idx) => (
                       <div key={idx} className="bg-slate-50 border border-slate-100 rounded-lg p-2 text-[10px] text-slate-600">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-slate-700 truncate max-w-22.5">{op.userName.split("@")[0]}</span>
-                          <span className="text-[8px] text-slate-400">{new Date(op.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                          <span className="font-bold text-slate-700 truncate max-w-22.5">{entry.userName}</span>
+                          <span className="text-[8px] text-slate-400">{entry.time}</span>
                         </div>
                         <p className="leading-snug">
-                          {op.opType === "insert" ? (
-                            <>
-                              Inserted <span className="font-mono bg-white px-1 rounded border">{op.char === " " ? "Space" : op.char}</span>
-                            </>
+                          {entry.opType === "insert" ? (
+                            entry.isNewline ? (
+                              <>
+                                Inserted <span className="font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px]">
+                                  {entry.count > 1 ? `${entry.count} Newlines (↵)` : "Newline (↵)"}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                Inserted <span className="font-mono font-medium bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-800 text-[10px] max-w-full inline-block truncate align-bottom">&quot;{entry.text}&quot;</span>
+                              </>
+                            )
                           ) : (
-                            "Deleted character"
+                            <span className="text-slate-500">Deleted {entry.count} character{entry.count > 1 ? "s" : ""}</span>
                           )}
                         </p>
                       </div>
@@ -1057,14 +1205,26 @@ export default function EditorPreview({
           <div>
             <div className="flex items-center justify-between mb-3 border-b border-slate-50 pb-2">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Discussion</span>
-              <span className="text-[9px] font-bold text-slate-400">{comments.length} Comments</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-bold text-slate-400">{comments.length} Comments</span>
+                {comments.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllComments}
+                    className="text-[9px] font-medium text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Comment Insertion Box */}
             <form onSubmit={handleAddComment} className="mb-4 bg-slate-50 border border-slate-100 rounded-xl p-2.5 space-y-2">
               {selectedText ? (
-                <div className="bg-white border-l-2 border-crimson p-1.5 rounded text-[10px] text-slate-500 mb-1 max-h-12 overflow-hidden truncate">
-                  Quote: &quot;{selectedText}&quot;
+                <div className="bg-white border-l-2 border-crimson p-1.5 rounded text-[10px] text-slate-500 mb-1 max-h-12 overflow-hidden truncate flex justify-between items-center">
+                  <span className="truncate">&quot;{selectedText}&quot;</span>
+                  <button type="button" onClick={() => setSelectedText("")} className="text-slate-400 hover:text-slate-600 text-xs ml-1 cursor-pointer">✕</button>
                 </div>
               ) : (
                 <div className="text-[9px] text-slate-400 italic mb-1">
@@ -1075,6 +1235,12 @@ export default function EditorPreview({
                 placeholder="Type a comment..."
                 value={newCommentText}
                 onChange={(e) => setNewCommentText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    handleAddComment(e);
+                  }
+                }}
                 className="w-full bg-white border border-slate-200/80 rounded-lg p-2 text-xs text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-crimson focus:border-crimson"
                 rows={2}
               />
@@ -1082,7 +1248,8 @@ export default function EditorPreview({
                 <span className="text-[9px] text-slate-400">Ctrl+Enter to post</span>
                 <button
                   type="submit"
-                  className="bg-crimson hover:bg-crimson-hover text-white px-3 py-1 rounded-lg text-[10px] font-bold shadow-xs cursor-pointer"
+                  disabled={!newCommentText.trim()}
+                  className="bg-crimson hover:bg-crimson-hover disabled:opacity-50 text-white px-3 py-1 rounded-lg text-[10px] font-bold shadow-xs cursor-pointer"
                 >
                   Comment
                 </button>
@@ -1091,28 +1258,48 @@ export default function EditorPreview({
 
             {/* Comment Threads */}
             <div className="space-y-3 max-h-[35vh] overflow-y-auto pr-1">
-              {comments.map((c) => (
-                <div 
-                  key={c.id} 
-                  className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl hover:border-slate-200 transition-colors"
-                >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <div className={`h-5 w-5 rounded-full ${c.color} text-white font-extrabold text-[8px] flex items-center justify-center select-none`}>
-                      {c.avatar}
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-slate-800">{c.author}</span>
-                      <span className="text-[8px] text-slate-400">{c.time}</span>
-                    </div>
-                  </div>
-                  {c.rangeText && (
-                    <div className="bg-white border-l border-slate-300 text-[9px] text-slate-500 px-1 py-0.5 rounded truncate mb-1">
-                      &quot;{c.rangeText}&quot;
-                    </div>
-                  )}
-                  <p className="text-[10.5px] text-slate-600 leading-normal">{c.text}</p>
+              {comments.length === 0 ? (
+                <div className="text-center py-6 px-3 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+                  <MessageSquare className="h-4 w-4 mx-auto mb-1.5 text-slate-300" />
+                  <p className="text-[11px] font-semibold text-slate-500">No discussion yet</p>
+                  <p className="text-[9px] text-slate-400 mt-0.5 leading-normal">
+                    Select text in the editor to quote it, or type above to add a comment.
+                  </p>
                 </div>
-              ))}
+              ) : (
+                comments.map((c) => (
+                  <div 
+                    key={c.id} 
+                    className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl hover:border-slate-200 transition-colors group relative"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <div className={`h-5 w-5 rounded-full ${c.color} text-white font-extrabold text-[8px] flex items-center justify-center select-none`}>
+                          {c.avatar}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-bold text-slate-800">{c.author}</span>
+                          <span className="text-[8px] text-slate-400">{formatCommentDisplayTime(c)}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteComment(c.id)}
+                        title="Delete comment"
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all p-1 rounded-md cursor-pointer"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {c.rangeText && (
+                      <div className="bg-white border-l-2 border-crimson/70 text-[9px] text-slate-500 px-2 py-1 rounded truncate mb-1.5 italic">
+                        &quot;{c.rangeText}&quot;
+                      </div>
+                    )}
+                    <p className="text-[10.5px] text-slate-600 leading-normal whitespace-pre-wrap">{c.text}</p>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
