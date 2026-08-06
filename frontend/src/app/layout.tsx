@@ -15,10 +15,18 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "DocStream — Write, Collaborate, and Share Documents Effortlessly",
+  title: "DocStream",
   description: "Create documents, collaborate in real time with your team, and keep your ideas synced everywhere. A premium document workspace built for modern product teams.",
   keywords: ["document collaboration", "real-time editor", "notion alternative", "google docs alternative", "team workspace", "document sharing"],
   authors: [{ name: "DocStream Team" }],
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
