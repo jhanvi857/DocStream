@@ -102,7 +102,7 @@ export default function EditorPreview({
   const groupedHistoryOps = useMemo(() => {
     if (!historyOps || historyOps.length === 0) return [];
 
-    // Sort ops chronologically (oldest first) to build text strings forward
+    // Sort ops chronologically (oldest first) to build activity forward
     const sortedOps = [...historyOps].sort((a, b) => {
       const timeA = new Date(a.createdAt).getTime();
       const timeB = new Date(b.createdAt).getTime();
@@ -117,22 +117,19 @@ export default function EditorPreview({
       text: string;
       count: number;
       time: string;
+      timestamp: number;
       isNewline?: boolean;
     }> = [];
 
     for (const op of sortedOps) {
-      // Basic validation: skip insert ops with empty character
       if (op.opType === "insert" && !op.char) continue;
 
-      // Filter out raw HTML tag fragments if any
-      if (op.char && (op.char.includes("<") || op.char.includes(">"))) continue;
-
       const date = new Date(op.createdAt);
+      const timestamp = isNaN(date.getTime()) ? Date.now() : date.getTime();
       const opTime = isNaN(date.getTime())
         ? "Recently"
         : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-      // Clean non-breaking space / html entity fragments
       let displayChar = op.char ? op.char.replace(/&nbsp;/gi, " ").replace(/amp;/gi, "") : "";
       if (displayChar === "\u00A0") displayChar = " ";
 
@@ -143,47 +140,103 @@ export default function EditorPreview({
 
       const last = grouped[grouped.length - 1];
 
-      // Check if this op can merge into the previous active group
-      const canMerge =
+      // Session match: same user within 2 minutes (120,000ms) of active editing
+      const isSameSession =
         last &&
         last.userName === userNameNorm &&
-        last.opType === opTypeNorm &&
-        last.time === opTime;
+        Math.abs(timestamp - last.timestamp) < 120000;
 
-      if (canMerge) {
+      if (isSameSession) {
+        last.timestamp = timestamp;
+        last.time = opTime;
+
         if (opTypeNorm === "delete") {
-          last.count++;
-        } else if (isNewlineOp && last.isNewline) {
-          last.count++;
-        } else if (!isNewlineOp && !last.isNewline && last.text.length < 80) {
-          last.text = last.text + displayChar;
-          last.count++;
+          // Absorb typo backspaces into active insertion string if available
+          if (last.opType === "insert" && last.text.length > 0) {
+            last.text = last.text.slice(0, -1);
+            if (last.count > 1) last.count--;
+          } else if (last.opType === "delete") {
+            last.count++;
+          } else {
+            grouped.push({
+              userName: userNameNorm,
+              opType: "delete",
+              text: "",
+              count: 1,
+              time: opTime,
+              timestamp,
+            });
+          }
+        } else if (isNewlineOp) {
+          if (last.opType === "insert") {
+            last.text += "\n";
+            last.count++;
+          } else {
+            grouped.push({
+              userName: userNameNorm,
+              opType: "insert",
+              text: "\n",
+              count: 1,
+              time: opTime,
+              timestamp,
+            });
+          }
         } else {
-          // Cannot merge due to newline boundary or text length limit reached
+          // Character insertion in active session - append full text without breaking multiline entries
+          if (last.opType === "insert") {
+            last.text += displayChar;
+            last.count++;
+          } else {
+            grouped.push({
+              userName: userNameNorm,
+              opType: "insert",
+              text: displayChar,
+              count: 1,
+              time: opTime,
+              timestamp,
+            });
+          }
+        }
+      } else {
+        // New editing session
+        if (opTypeNorm === "delete") {
           grouped.push({
             userName: userNameNorm,
-            opType: opTypeNorm,
+            opType: "delete",
+            text: "",
+            count: 1,
+            time: opTime,
+            timestamp,
+          });
+        } else {
+          grouped.push({
+            userName: userNameNorm,
+            opType: "insert",
             text: isNewlineOp ? "Newline (↵)" : displayChar,
             count: 1,
             time: opTime,
+            timestamp,
             isNewline: isNewlineOp,
           });
         }
-      } else {
-        grouped.push({
-          userName: userNameNorm,
-          opType: opTypeNorm,
-          text: isNewlineOp ? "Newline (↵)" : (opTypeNorm === "insert" ? displayChar : ""),
-          count: 1,
-          time: opTime,
-          isNewline: isNewlineOp,
-        });
       }
     }
 
-    // Reverse array so newest grouped activities appear at the top of the history feed
-    return grouped.reverse();
+    // Filter out HTML tags and fragments, and prune empty insert entries after backspace absorption
+    const finalGrouped: typeof grouped = [];
+    for (const entry of grouped) {
+      if (entry.opType === "insert" && !entry.isNewline) {
+        const cleanedText = cleanHistoryText(entry.text);
+        if (!cleanedText || cleanedText.trim().length === 0) continue;
+        entry.text = cleanedText;
+      }
+      finalGrouped.push(entry);
+    }
+
+    // Reverse array so newest activity sessions appear at the top of the history feed
+    return finalGrouped.reverse();
   }, [historyOps]);
+
   const [wsConnected, setWsConnected] = useState(false);
 
   // Outline Generation State
@@ -295,7 +348,7 @@ export default function EditorPreview({
   // Update table of contents based on heading tags present inside the editor
   const updateOutline = () => {
     if (!editorRef.current) return;
-    const headingElements = editorRef.current.querySelectorAll("h2, h3");
+    const headingElements = editorRef.current.querySelectorAll("h1, h2, h3");
     const outlineItems: Array<{ id: string; text: string; level: string }> = [];
     headingElements.forEach((el, index) => {
       // Ensure element has an ID for anchoring
@@ -365,7 +418,7 @@ export default function EditorPreview({
 
             const content = crdtRef.current.toText();
             if (editorRef.current) {
-              editorRef.current.innerHTML = sanitizeHTML(content) || "<h2>Untitled Document</h2><p>Click here to start editing your new page...</p>";
+              editorRef.current.innerHTML = formatCRDTToHTML(content) || "<h2>Untitled Document</h2><p>Click here to start editing your new page...</p>";
               updateOutline();
             }
             break;
@@ -423,7 +476,7 @@ export default function EditorPreview({
                   }
                 }
 
-                editorRef.current.innerHTML = sanitizeHTML(content) || "<p></p>";
+                editorRef.current.innerHTML = formatCRDTToHTML(content) || "<p></p>";
 
                 if (hasFocus) {
                   setCaretPosition(editorRef.current, adjustedCaret);
@@ -569,15 +622,20 @@ export default function EditorPreview({
   } | null>(null);
 
   const autocompleteTimerRef = useRef<number | null>(null);
+  const updateContentTimerRef = useRef<number | null>(null);
+  const outlineTimerRef = useRef<number | null>(null);
+  const historyTimerRef = useRef<number | null>(null);
+  const cursorTimerRef = useRef<number | null>(null);
+  const pendingHistoryOpsRef = useRef<HistoryOp[]>([]);
 
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current !== null) {
-        window.clearTimeout(saveTimerRef.current);
-      }
-      if (autocompleteTimerRef.current !== null) {
-        window.clearTimeout(autocompleteTimerRef.current);
-      }
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      if (autocompleteTimerRef.current !== null) window.clearTimeout(autocompleteTimerRef.current);
+      if (updateContentTimerRef.current !== null) window.clearTimeout(updateContentTimerRef.current);
+      if (outlineTimerRef.current !== null) window.clearTimeout(outlineTimerRef.current);
+      if (historyTimerRef.current !== null) window.clearTimeout(historyTimerRef.current);
+      if (cursorTimerRef.current !== null) window.clearTimeout(cursorTimerRef.current);
     };
   }, []);
 
@@ -690,14 +748,14 @@ export default function EditorPreview({
     }
   };
 
-  // Handle local text editing
+  // Handle local text editing - optimized for 60fps native typing speed
   const handleInput = () => {
-    if (!editorRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!editorRef.current) return;
 
-    // Instantly clear suggestion when typing to prevent rendering lag
+    // Instantly clear ghost suggestion when typing
     setActiveSuggestion(null);
 
-    setSaveStatus("saving");
+    setSaveStatus(prev => (prev === "saving" ? prev : "saving"));
 
     // Extract HTML content from contenteditable DOM to preserve rich text and block formatting (h1, h2, h3, lists)
     const rawText = editorRef.current.innerHTML || "";
@@ -709,7 +767,7 @@ export default function EditorPreview({
       return;
     }
 
-    // Generate local operations via character diffing
+    // Generate local operations via fast character diffing
     const ops = diffAndGenerateOps(
       crdtRef.current,
       oldText,
@@ -721,17 +779,19 @@ export default function EditorPreview({
       }
     );
 
-    // Apply locally and transmit each op
+    // Apply locally and transmit over WS if connected
     ops.forEach(op => {
       crdtRef.current.apply(op);
-      wsRef.current?.send(JSON.stringify({
-        type: "op",
-        doc_id: doc.id,
-        payload: op
-      }));
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "op",
+          doc_id: doc.id,
+          payload: op
+        }));
+      }
     });
 
-    // Optimistically update history ops log in local state
+    // Throttled history ops flush (flushes accumulated ops to React state every 300ms live)
     const userEmail = getEmail() || "you@company.com";
     const newHistoryEntries: HistoryOp[] = ops.map(op => ({
       opType: op.op_type,
@@ -742,12 +802,34 @@ export default function EditorPreview({
       createdAt: new Date().toISOString()
     }));
     if (newHistoryEntries.length > 0) {
-      setHistoryOps(prev => [...prev, ...newHistoryEntries]);
+      pendingHistoryOpsRef.current.push(...newHistoryEntries);
+      if (historyTimerRef.current === null) {
+        historyTimerRef.current = window.setTimeout(() => {
+          historyTimerRef.current = null;
+          if (pendingHistoryOpsRef.current.length > 0) {
+            const batch = [...pendingHistoryOpsRef.current];
+            pendingHistoryOpsRef.current = [];
+            setHistoryOps(prev => [...prev, ...batch]);
+          }
+        }, 300);
+      }
     }
 
-    // Notify parent component about state updates
-    onUpdateContent(doc.id, newText);
-    updateOutline();
+    // Debounce parent document content update (500ms)
+    if (updateContentTimerRef.current !== null) {
+      window.clearTimeout(updateContentTimerRef.current);
+    }
+    updateContentTimerRef.current = window.setTimeout(() => {
+      onUpdateContent(doc.id, newText);
+    }, 500);
+
+    // Debounce Table of Contents outline update (300ms)
+    if (outlineTimerRef.current !== null) {
+      window.clearTimeout(outlineTimerRef.current);
+    }
+    outlineTimerRef.current = window.setTimeout(() => {
+      updateOutline();
+    }, 300);
 
     // Trigger saved status timer
     if (saveTimerRef.current !== null) {
@@ -757,29 +839,31 @@ export default function EditorPreview({
       setSaveStatus("saved");
     }, 600);
 
-    // Broadcast our updated cursor index
+    // Broadcast updated cursor offset
     handleCaretUpdate();
   };
 
-  // Broadcast local cursor offset
+  // Broadcast local cursor offset (debounced to avoid WS flooding)
   const handleCaretUpdate = () => {
     if (!editorRef.current) return;
-
-    // Guard: prevent cursor updates if focus is in comment box or elsewhere
     if (document.activeElement !== editorRef.current) return;
 
-    const caretPos = getCaretPosition(editorRef.current);
+    if (cursorTimerRef.current !== null) {
+      window.clearTimeout(cursorTimerRef.current);
+    }
+    cursorTimerRef.current = window.setTimeout(() => {
+      if (!editorRef.current) return;
+      const caretPos = getCaretPosition(editorRef.current);
+      triggerAutocomplete(caretPos);
 
-    // Trigger local autocomplete word suggestions
-    triggerAutocomplete(caretPos);
-
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    wsRef.current.send(JSON.stringify({
-      type: "cursor",
-      doc_id: doc.id,
-      payload: { position: caretPos }
-    }));
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "cursor",
+          doc_id: doc.id,
+          payload: { position: caretPos }
+        }));
+      }
+    }, 100);
   };
 
   // Tracking text highlighting for comment threads
@@ -793,10 +877,76 @@ export default function EditorPreview({
     handleCaretUpdate();
   };
 
-  // Apply rich-text formatting
+  // Apply rich-text formatting (h1, h2, h3, bold, italic, underline, list)
   const applyFormat = (command: string, value: string = "") => {
-    editorRef.current?.focus();
-    window.document.execCommand(command, false, value);
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+
+    if (command === "formatBlock") {
+      const tag = value.toLowerCase().replace(/[<>]/g, ""); // "h1", "h2", "h3", "p"
+      
+      const selection = window.getSelection();
+      let range: Range | null = null;
+      if (selection && selection.rangeCount > 0) {
+        range = selection.getRangeAt(0);
+      }
+
+      // 1. Try standard execCommand formatBlock with browser candidate tags
+      let success = false;
+      const candidates = [tag.toUpperCase(), `<${tag.toUpperCase()}>`, tag, `<${tag}>` ];
+      for (const cand of candidates) {
+        try {
+          success = window.document.execCommand("formatBlock", false, cand);
+          if (success) break;
+        } catch {
+          // Continue to next candidate
+        }
+      }
+
+      // 2. Direct DOM Element conversion fallback
+      if (!success || range) {
+        let container: Node | null = range ? range.commonAncestorContainer : null;
+        if (container && container.nodeType === Node.TEXT_NODE) {
+          container = container.parentNode;
+        }
+        
+        // Find enclosing block element inside editorRef
+        let blockParent = container as HTMLElement | null;
+        while (
+          blockParent &&
+          blockParent !== editorRef.current &&
+          !["P", "H1", "H2", "H3", "DIV", "LI"].includes(blockParent.tagName)
+        ) {
+          blockParent = blockParent.parentElement;
+        }
+
+        if (blockParent && blockParent !== editorRef.current) {
+          // If already the requested tag, toggle back to "p"
+          const targetTag = blockParent.tagName.toLowerCase() === tag ? "p" : tag;
+          const newEl = document.createElement(targetTag);
+          newEl.innerHTML = blockParent.innerHTML;
+          blockParent.parentNode?.replaceChild(newEl, blockParent);
+
+          // Restore selection to the new element
+          if (selection) {
+            const newRange = document.createRange();
+            newRange.selectNodeContents(newEl);
+            newRange.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          }
+        } else {
+          // Default: wrap editor content into target tag
+          const newEl = document.createElement(tag);
+          newEl.innerHTML = editorRef.current.innerHTML || "";
+          editorRef.current.innerHTML = "";
+          editorRef.current.appendChild(newEl);
+        }
+      }
+    } else {
+      window.document.execCommand(command, false, value);
+    }
+
     handleInput();
   };
 
@@ -962,15 +1112,20 @@ export default function EditorPreview({
               <div className="space-y-1">
                 {headings.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic p-2">
-                    Use headings (H1, H2) to generate a document outline.
+                    Use headings (H1, H2, H3) to generate a document outline.
                   </p>
                 ) : (
                   headings.map((h, idx) => (
                     <button
                       key={idx}
                       onClick={() => scrollToHeading(h.id)}
-                      className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer hover:bg-slate-50 truncate ${h.level === "h2" ? "text-slate-700 pl-2" : "text-slate-500 pl-5 text-[11px]"
-                        }`}
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer hover:bg-slate-50 truncate ${
+                        h.level === "h1"
+                          ? "text-slate-900 font-bold pl-2"
+                          : h.level === "h2"
+                          ? "text-slate-700 pl-4"
+                          : "text-slate-500 pl-6 text-[11px]"
+                      }`}
                     >
                       {h.text}
                     </button>
@@ -1003,7 +1158,7 @@ export default function EditorPreview({
                               </>
                             ) : (
                               <>
-                                Inserted <span className="font-mono font-medium bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-800 text-[10px] max-w-full inline-block truncate align-bottom">&quot;{entry.text}&quot;</span>
+                                Inserted <span className="font-mono font-medium bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-800 text-[10px] max-w-full inline-block break-words whitespace-pre-wrap leading-relaxed">&quot;{entry.text}&quot;</span>
                               </>
                             )
                           ) : (
@@ -1032,45 +1187,59 @@ export default function EditorPreview({
         <main className="flex-1 overflow-y-auto px-4 md:px-8 py-8 flex flex-col items-center">
           {/* Format Control Bar floating above sheet */}
           <div className={`flex items-center gap-1 bg-white border border-slate-150 rounded-xl px-2 py-1.5 shadow-md shadow-slate-100 mb-6 sticky top-0 z-10 w-full max-w-2xl select-none ${userRole === "viewer" ? "pointer-events-none opacity-50" : ""}`}>
-            <button
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("bold")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Bold"
             >
               <Bold className="h-4 w-4" />
             </button>
-            <button
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("italic")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Italic"
             >
               <Italic className="h-4 w-4" />
             </button>
-            <button
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("underline")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Underline"
             >
               <Underline className="h-4 w-4" />
             </button>
-
+            
             <div className="h-4 w-px bg-slate-200 mx-1" />
 
-            <button
-              onClick={() => applyFormat("formatBlock", "h2")}
-              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyFormat("formatBlock", "h1")}
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer font-extrabold text-xs px-2"
               title="Heading 1"
             >
               <Heading1 className="h-4 w-4" />
             </button>
-            <button
-              onClick={() => applyFormat("formatBlock", "h3")}
-              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyFormat("formatBlock", "h2")}
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer font-bold text-xs px-2"
               title="Heading 2"
             >
               <Heading2 className="h-4 w-4" />
             </button>
-            <button
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyFormat("formatBlock", "h3")}
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer font-semibold text-xs px-2"
+              title="Heading 3"
+            >
+              H3
+            </button>
+            <button 
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyFormat("insertUnorderedList")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Bulleted List"
@@ -1095,7 +1264,7 @@ export default function EditorPreview({
             {/* Editor Canvas Container */}
             <div
               ref={editorRef}
-              contentEditable={wsConnected && userRole !== "viewer"}
+              contentEditable={userRole !== "viewer"}
               suppressContentEditableWarning
               spellCheck
               dir="ltr"
@@ -1104,7 +1273,7 @@ export default function EditorPreview({
               onKeyUp={handleMouseUp}
               onKeyDown={handleKeyDown}
               data-placeholder="Start typing your ideas here..."
-              className="editor-canvas outline-hidden prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed flex-1"
+              className="editor-canvas outline-hidden prose prose-slate max-w-none text-slate-700 text-sm leading-relaxed flex-1 min-h-[300px] whitespace-pre-wrap break-words"
             />
 
             {/* Real-time Collaborative Cursors Overlay */}
@@ -1343,4 +1512,48 @@ function sanitizeHTML(html: string): string {
   });
 
   return doc.body.innerHTML;
+}
+
+// formatCRDTToHTML formats CRDT text content into safe HTML preserving newlines as <br> tags
+function formatCRDTToHTML(text: string): string {
+  if (!text) return "";
+  if (text.includes("<") && text.includes(">")) {
+    return sanitizeHTML(text);
+  }
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+  return escaped.replace(/\n/g, "<br>");
+}
+
+// cleanHistoryText extracts clean user-typed text from activity log entries using DOMParser and strips tag fragments
+function cleanHistoryText(text: string): string {
+  if (!text) return "";
+  
+  let cleaned = text;
+  if (cleaned.includes("<") && cleaned.includes(">")) {
+    if (typeof window !== "undefined") {
+      try {
+        const doc = new DOMParser().parseFromString(cleaned, "text/html");
+        cleaned = doc.body.textContent || doc.body.innerText || "";
+      } catch {
+        cleaned = cleaned.replace(/<[^>]*>/g, "");
+      }
+    } else {
+      cleaned = cleaned.replace(/<[^>]*>/g, "");
+    }
+  } else if (cleaned.includes("<") || cleaned.includes(">")) {
+    cleaned = cleaned.replace(/<[^>]*>/g, "").replace(/<[^>]*$/g, "");
+  }
+
+  // Strip orphan HTML tag endings like "div>", "/div>", "p>", "span>", "font>", "h1>", "h2>", "h3>", "ul>", "li>"
+  cleaned = cleaned
+    .replace(/\/?(div|p|span|font|h1|h2|h3|ul|li|ol|br|u|b|i|strong|em)>/gi, "")
+    .replace(/<[a-zA-Z0-9/]+/gi, "")
+    .trim();
+
+  return cleaned;
 }

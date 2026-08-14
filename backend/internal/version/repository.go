@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -43,13 +44,43 @@ func NewRepository(pool *pgxpool.Pool) Repository {
 }
 
 func (r *postgresRepository) SaveOp(ctx context.Context, op *Op) error {
-	query := `
+	opID := op.ID
+	if _, err := uuid.Parse(opID); err != nil {
+		opID = uuid.New().String()
+	}
+
+	createdAt := op.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+
+	var isValidUser bool
+	if op.UserID != "" {
+		if _, err := uuid.Parse(op.UserID); err == nil {
+			isValidUser = true
+		}
+	}
+
+	if isValidUser {
+		query := `
+			INSERT INTO ops_log (id, doc_id, user_id, op_type, char_id, char, after_id, is_deleted, vector_clock, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+		_, err := r.pool.Exec(ctx, query,
+			opID, op.DocID, op.UserID, op.OpType, op.CharID, op.Char, op.AfterID, op.IsDeleted, op.VectorClock, createdAt)
+		if err == nil {
+			return nil
+		}
+	}
+
+	// Fallback: If user_id is missing/invalid or FK constraint failed, substitute document owner_id
+	fallbackQuery := `
 		INSERT INTO ops_log (id, doc_id, user_id, op_type, char_id, char, after_id, is_deleted, vector_clock, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-	_, err := r.pool.Exec(ctx, query,
-		op.ID, op.DocID, op.UserID, op.OpType, op.CharID, op.Char, op.AfterID, op.IsDeleted, op.VectorClock, op.CreatedAt)
-	if err != nil {
-		return fmt.Errorf("failed to save op: %w", err)
+		SELECT $1, $2, d.owner_id, $3, $4, $5, $6, $7, $8, $9
+		FROM documents d WHERE d.id = $2`
+	_, fallbackErr := r.pool.Exec(ctx, fallbackQuery,
+		opID, op.DocID, op.OpType, op.CharID, op.Char, op.AfterID, op.IsDeleted, op.VectorClock, createdAt)
+	if fallbackErr != nil {
+		return fmt.Errorf("failed to save op (original err: %w)", fallbackErr)
 	}
 	return nil
 }
@@ -157,9 +188,9 @@ func (r *postgresRepository) GetTotalOpsCount(ctx context.Context, docID string)
 
 func (r *postgresRepository) GetOpsWithUser(ctx context.Context, docID string) ([]*OpWithUser, error) {
 	query := `
-		SELECT o.op_type, o.char_id, o.char, o.after_id, o.is_deleted, o.user_id, u.email, o.created_at
+		SELECT o.op_type, o.char_id, o.char, o.after_id, o.is_deleted, o.user_id, COALESCE(u.email, o.user_id::text), o.created_at
 		FROM ops_log o
-		JOIN users u ON o.user_id = u.id
+		LEFT JOIN users u ON o.user_id = u.id
 		WHERE o.doc_id = $1
 		ORDER BY o.created_at ASC, o.id ASC`
 	rows, err := r.pool.Query(ctx, query, docID)

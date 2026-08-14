@@ -15,6 +15,7 @@ import (
 	"docstream/internal/ws"
 	"docstream/pkg/trie"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -496,8 +497,18 @@ func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client
 
 	// 2. Persist the operation to PostgreSQL
 	vcJSON, _ := json.Marshal(op.VectorClock)
+
+	opID := op.ID
+	if _, err := uuid.Parse(opID); err != nil {
+		opID = uuid.New().String()
+	}
+	createdAt := op.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+
 	dbOp := &version.Op{
-		ID:          op.ID,
+		ID:          opID,
 		DocID:       op.DocID,
 		UserID:      op.UserID,
 		OpType:      op.OpType,
@@ -506,7 +517,7 @@ func (s *Session) ApplyOp(ctx context.Context, op crdt.Op, excludeClient *Client
 		AfterID:     op.AfterID,
 		IsDeleted:   op.IsDeleted,
 		VectorClock: vcJSON,
-		CreatedAt:   op.CreatedAt,
+		CreatedAt:   createdAt,
 	}
 
 	shouldSnapshot, err := s.vService.PersistOp(ctx, dbOp)

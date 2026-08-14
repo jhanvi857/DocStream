@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"docstream/internal/crdt"
@@ -351,13 +350,12 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 			insertIdx := -1
 			if op.AfterID != "" {
 				for i, c := range chars {
-					if c.id == op.AfterID {
+					if c != nil && c.id == op.AfterID {
 						insertIdx = i
 						break
 					}
 				}
 				if insertIdx == -1 {
-					slog.Error("History log replay: parent char ID not found, using end of document as fallback", "afterID", op.AfterID, "charID", op.CharID, "docID", docID)
 					insertIdx = len(chars) - 1
 				}
 			}
@@ -365,8 +363,16 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 			// RGA forward scan
 			skipped := make(map[string]bool)
 			scanIdx := insertIdx + 1
+			if scanIdx < 0 {
+				scanIdx = 0
+			}
+
 			for scanIdx < len(chars) {
 				curr := chars[scanIdx]
+				if curr == nil {
+					scanIdx++
+					continue
+				}
 				isSibling := curr.afterID == op.AfterID
 				isDescendant := skipped[curr.afterID]
 
@@ -383,8 +389,8 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 			}
 
 			// Count non-deleted elements before scanned index
-			for i := 0; i < scanIdx; i++ {
-				if !chars[i].isDeleted {
+			for i := 0; i < scanIdx && i < len(chars); i++ {
+				if chars[i] != nil && !chars[i].isDeleted {
 					pos++
 				}
 			}
@@ -395,6 +401,9 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 				afterID:   op.AfterID,
 				isDeleted: false,
 			}
+			if scanIdx > len(chars) {
+				scanIdx = len(chars)
+			}
 			chars = append(chars, nil)
 			copy(chars[scanIdx+1:], chars[scanIdx:])
 			chars[scanIdx] = newChar
@@ -402,7 +411,7 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 		} else if op.OpType == "delete" {
 			targetIdx := -1
 			for i, c := range chars {
-				if c.id == op.CharID {
+				if c != nil && c.id == op.CharID {
 					targetIdx = i
 					break
 				}
@@ -410,12 +419,14 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 
 			if targetIdx != -1 {
 				// Count non-deleted elements before target index
-				for i := 0; i < targetIdx; i++ {
-					if !chars[i].isDeleted {
+				for i := 0; i < targetIdx && i < len(chars); i++ {
+					if chars[i] != nil && !chars[i].isDeleted {
 						pos++
 					}
 				}
-				chars[targetIdx].isDeleted = true
+				if chars[targetIdx] != nil {
+					chars[targetIdx].isDeleted = true
+				}
 			}
 		}
 
@@ -427,6 +438,11 @@ func (s *service) History(ctx context.Context, docID string, userID string, from
 			UserName:  op.Email, // User email acts as display name
 			CreatedAt: op.CreatedAt,
 		})
+	}
+
+	// Reverse history array to show the most recent changes first (descending order)
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
 	}
 
 	// 4. Apply pagination slicing
