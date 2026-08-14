@@ -74,9 +74,9 @@ func (d *CRDTDoc) Insert(op Op) error {
 				break
 			}
 		}
-		// Return an error if the requested parent ID is missing (causes desync)
+		// If the requested parent ID is missing, fallback to appending at the end of the document
 		if insertIdx == -1 {
-			return fmt.Errorf("parent char ID %s not found for insertion of %s", op.AfterID, op.CharID)
+			insertIdx = len(d.Chars) - 1
 		}
 	}
 
