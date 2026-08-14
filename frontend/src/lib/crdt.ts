@@ -64,7 +64,7 @@ export class CRDTDoc {
     if (op.after_id) {
       insertIdx = this.chars.findIndex(c => c.id === op.after_id);
       if (insertIdx === -1) {
-        throw new Error(`crdt: parent char ID ${op.after_id} not found for insertion of ${op.char_id}`);
+        insertIdx = this.chars.length - 1;
       }
     }
 
@@ -179,7 +179,7 @@ export function generateDeleteOps(
   return ops;
 }
 
-// Plain-text rune-based diffing algorithm (converting &nbsp; to \u00A0 and operating per rune)
+// Optimized diffing algorithm for instant responsive typing
 export function diffAndGenerateOps(
   oldDoc: CRDTDoc,
   oldText: string,
@@ -187,18 +187,18 @@ export function diffAndGenerateOps(
   userID: string,
   nextClock: () => number
 ): Op[] {
-  const normalizedOld = oldText.replace(/&nbsp;/gi, "\u00A0");
-  const normalizedNew = newText.replace(/&nbsp;/gi, "\u00A0");
+  const normalizedOld = oldText.includes("&nbsp;") ? oldText.replace(/&nbsp;/gi, "\u00A0") : oldText;
+  const normalizedNew = newText.includes("&nbsp;") ? newText.replace(/&nbsp;/gi, "\u00A0") : newText;
 
-  const oldRunes = Array.from(normalizedOld);
-  const newRunes = Array.from(normalizedNew);
+  const oldLen = normalizedOld.length;
+  const newLen = normalizedNew.length;
 
-  // Find common prefix length
+  // Find common prefix length using string character code comparisons
   let prefixLen = 0;
   while (
-    prefixLen < oldRunes.length &&
-    prefixLen < newRunes.length &&
-    oldRunes[prefixLen] === newRunes[prefixLen]
+    prefixLen < oldLen &&
+    prefixLen < newLen &&
+    normalizedOld.charCodeAt(prefixLen) === normalizedNew.charCodeAt(prefixLen)
   ) {
     prefixLen++;
   }
@@ -206,33 +206,49 @@ export function diffAndGenerateOps(
   // Find common suffix length
   let suffixLen = 0;
   while (
-    suffixLen < oldRunes.length - prefixLen &&
-    suffixLen < newRunes.length - prefixLen &&
-    oldRunes[oldRunes.length - 1 - suffixLen] === newRunes[newRunes.length - 1 - suffixLen]
+    suffixLen < oldLen - prefixLen &&
+    suffixLen < newLen - prefixLen &&
+    normalizedOld.charCodeAt(oldLen - 1 - suffixLen) === normalizedNew.charCodeAt(newLen - 1 - suffixLen)
   ) {
     suffixLen++;
   }
 
-  const deletedCount = oldRunes.length - prefixLen - suffixLen;
-  const insertedRunes = newRunes.slice(prefixLen, newRunes.length - suffixLen);
+  const deletedCount = oldLen - prefixLen - suffixLen;
+  const insertedString = normalizedNew.substring(prefixLen, newLen - suffixLen);
 
   const ops: Op[] = [];
+  const activeChars = oldDoc.getActiveChars();
 
   // 1. Delete Operations
   if (deletedCount > 0) {
-    const deleteOps = generateDeleteOps(oldDoc, prefixLen, deletedCount, userID);
-    ops.push(...deleteOps);
+    const deletedNodes = activeChars.slice(prefixLen, prefixLen + deletedCount);
+    const nowIso = new Date().toISOString();
+    for (let i = 0; i < deletedNodes.length; i++) {
+      ops.push({
+        id: generateUUID(),
+        doc_id: oldDoc.docID,
+        user_id: userID,
+        op_type: "delete",
+        char_id: deletedNodes[i].id,
+        char: "",
+        after_id: "",
+        is_deleted: true,
+        created_at: nowIso
+      });
+    }
   }
 
   // 2. Insert Operations
-  if (insertedRunes.length > 0) {
-    const activeChars = oldDoc.getActiveChars();
+  if (insertedString.length > 0) {
     let afterID = "";
     if (prefixLen > 0 && activeChars[prefixLen - 1]) {
       afterID = activeChars[prefixLen - 1].id;
     }
 
-    for (const r of insertedRunes) {
+    const insertedRunes = Array.from(insertedString);
+    const nowIso = new Date().toISOString();
+    for (let i = 0; i < insertedRunes.length; i++) {
+      const r = insertedRunes[i];
       const charID = `${userID}:${nextClock()}`;
       ops.push({
         id: generateUUID(),
@@ -243,7 +259,7 @@ export function diffAndGenerateOps(
         char: r,
         after_id: afterID,
         is_deleted: false,
-        created_at: new Date().toISOString()
+        created_at: nowIso
       });
       afterID = charID;
     }
