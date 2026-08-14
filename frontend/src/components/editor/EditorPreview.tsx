@@ -2,8 +2,8 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import { 
-  ArrowLeft, Bold, Italic, Underline, List, Heading1, Heading2, 
+import {
+  ArrowLeft, Bold, Italic, Underline, List, Heading1, Heading2,
   MessageSquare, Star, Lock, Globe, CheckCircle, Users, ShieldAlert, Trash2
 } from "lucide-react";
 import { DocumentItem } from "../dashboard/DocGrid";
@@ -42,7 +42,7 @@ export default function EditorPreview({
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  
+
   // CRDT Refs
   const crdtRef = useRef<CRDTDoc>(new CRDTDoc(doc.id));
   const clockRef = useRef(0);
@@ -81,7 +81,7 @@ export default function EditorPreview({
   const [newCommentText, setNewCommentText] = useState("");
   const [selectedText, setSelectedText] = useState("");
   const [activeTab, setActiveTab] = useState<"outline" | "history">("outline");
-  
+
   // Real-Time States
   const [collaborators, setCollaborators] = useState<Array<{ userID: string; userName: string; color: string; position?: number | null }>>([]);
   const remoteCursors = useMemo(() => {
@@ -279,7 +279,7 @@ export default function EditorPreview({
           left: rects[0].left - parentRect.left,
         };
       }
-      
+
       // Fallback for collapsed ranges at the end of text nodes
       const rect = range.getBoundingClientRect();
       if (rect && rect.top > 0) {
@@ -624,11 +624,11 @@ export default function EditorPreview({
         if (suggestions && suggestions.length > 0) {
           // Take the highest frequency suggestion
           const bestSuggestion = suggestions[0].word;
-          
+
           // Verify it matches the prefix case-insensitively, and has extra characters to suggest
           if (bestSuggestion.toLowerCase().startsWith(prefix.toLowerCase()) && bestSuggestion.length > prefix.length) {
             const suffix = bestSuggestion.substring(prefix.length);
-            
+
             // Get coordinates of the caret
             const coord = getCaretCoordinates(editorRef.current!, caretPos);
             if (coord) {
@@ -659,19 +659,19 @@ export default function EditorPreview({
     if (selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
       range.deleteContents();
-      
+
       const textNode = document.createTextNode(activeSuggestion.suffix);
       range.insertNode(textNode);
-      
+
       // Move cursor to end of inserted suffix
       range.setStartAfter(textNode);
       range.setEndAfter(textNode);
       selection.removeAllRanges();
       selection.addRange(range);
-      
+
       // Clear suggestion
       setActiveSuggestion(null);
-      
+
       // Trigger editor inputs to register changes in CRDT and push via WebSocket
       handleInput();
     }
@@ -683,7 +683,7 @@ export default function EditorPreview({
       acceptSuggestion();
       return;
     }
-    
+
     if (e.key === "Escape") {
       setActiveSuggestion(null);
       return;
@@ -699,8 +699,8 @@ export default function EditorPreview({
 
     setSaveStatus("saving");
 
-    // Extract clean text from contenteditable DOM converting linebreaks to \n
-    const rawText = editorRef.current.innerText || editorRef.current.textContent || "";
+    // Extract HTML content from contenteditable DOM to preserve rich text and block formatting (h1, h2, h3, lists)
+    const rawText = editorRef.current.innerHTML || "";
     const newText = rawText.replace(/\r\n/g, "\n").replace(/&nbsp;/gi, "\u00A0");
     const oldText = crdtRef.current.toText();
 
@@ -764,7 +764,7 @@ export default function EditorPreview({
   // Broadcast local cursor offset
   const handleCaretUpdate = () => {
     if (!editorRef.current) return;
-    
+
     // Guard: prevent cursor updates if focus is in comment box or elsewhere
     if (document.activeElement !== editorRef.current) return;
 
@@ -860,10 +860,10 @@ export default function EditorPreview({
 
   return (
     <div className="flex flex-1 flex-col bg-slate-50 min-h-screen">
-      
+
       {/* Editor Sub-Header / Tool Bar */}
       <div className="flex h-16 w-full items-center justify-between border-b border-slate-100 bg-white px-6">
-        
+
         {/* Back and Title */}
         <div className="flex items-center gap-4 max-w-xl flex-1">
           <button
@@ -872,7 +872,7 @@ export default function EditorPreview({
           >
             <ArrowLeft className="h-4.5 w-4.5" />
           </button>
-          
+
           <div className="flex flex-col flex-1">
             <input
               type="text"
@@ -883,7 +883,7 @@ export default function EditorPreview({
               }}
               className="text-sm font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-crimson focus:outline-hidden py-0.5 px-1 rounded transition-colors"
             />
-            
+
             {/* Auto Save Sync Status */}
             <div className="flex items-center gap-1.5 px-1 mt-0.5 select-none">
               {!wsConnected ? (
@@ -915,9 +915,8 @@ export default function EditorPreview({
           {/* Favorites Star Toggle */}
           <button
             onClick={(e) => onToggleFavorite(doc.id, e)}
-            className={`rounded-xl p-2.5 border border-slate-100 transition-colors cursor-pointer hover:bg-slate-50 ${
-              doc.isFavorite ? "text-crimson bg-crimson-light/30 border-crimson/20" : "text-slate-400"
-            }`}
+            className={`rounded-xl p-2.5 border border-slate-100 transition-colors cursor-pointer hover:bg-slate-50 ${doc.isFavorite ? "text-crimson bg-crimson-light/30 border-crimson/20" : "text-slate-400"
+              }`}
           >
             <Star className={`h-4.5 w-4.5 ${doc.isFavorite ? "fill-current" : ""}`} />
           </button>
@@ -925,11 +924,10 @@ export default function EditorPreview({
           {/* Share Button Toggle */}
           <button
             onClick={() => setShowShareModal(true)}
-            className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold border transition-all cursor-pointer ${
-              doc.isShared 
+            className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold border transition-all cursor-pointer ${doc.isShared
                 ? "bg-crimson-light text-crimson border-crimson/20 hover:bg-crimson-light/80"
                 : "bg-crimson hover:bg-crimson-hover text-white border-transparent shadow-md shadow-crimson/10 hover:scale-[1.02]"
-            }`}
+              }`}
           >
             {doc.isShared ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
             <span>{doc.isShared ? "Shared Link Active" : "Share Doc"}</span>
@@ -939,23 +937,21 @@ export default function EditorPreview({
 
       {/* Main 3-Panel Workspace */}
       <div className="flex flex-1 flex-row overflow-hidden h-[calc(100vh-4rem)]">
-        
+
         {/* PANEL 1: Left Document Outline / History Panel (Desktop only) */}
         <nav className="hidden md:flex w-56 flex-col border-r border-slate-100 bg-white p-4 space-y-4">
           <div className="flex border-b border-slate-150 pb-1.5">
             <button
               onClick={() => setActiveTab("outline")}
-              className={`flex-1 text-center py-1 text-xs font-bold transition-all cursor-pointer ${
-                activeTab === "outline" ? "text-crimson border-b-2 border-crimson" : "text-slate-400 hover:text-slate-700"
-              }`}
+              className={`flex-1 text-center py-1 text-xs font-bold transition-all cursor-pointer ${activeTab === "outline" ? "text-crimson border-b-2 border-crimson" : "text-slate-400 hover:text-slate-700"
+                }`}
             >
               Outline
             </button>
             <button
               onClick={() => setActiveTab("history")}
-              className={`flex-1 text-center py-1 text-xs font-bold transition-all cursor-pointer ${
-                activeTab === "history" ? "text-crimson border-b-2 border-crimson" : "text-slate-400 hover:text-slate-700"
-              }`}
+              className={`flex-1 text-center py-1 text-xs font-bold transition-all cursor-pointer ${activeTab === "history" ? "text-crimson border-b-2 border-crimson" : "text-slate-400 hover:text-slate-700"
+                }`}
             >
               History
             </button>
@@ -973,9 +969,8 @@ export default function EditorPreview({
                     <button
                       key={idx}
                       onClick={() => scrollToHeading(h.id)}
-                      className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer hover:bg-slate-50 truncate ${
-                        h.level === "h2" ? "text-slate-700 pl-2" : "text-slate-500 pl-5 text-[11px]"
-                      }`}
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer hover:bg-slate-50 truncate ${h.level === "h2" ? "text-slate-700 pl-2" : "text-slate-500 pl-5 text-[11px]"
+                        }`}
                     >
                       {h.text}
                     </button>
@@ -1022,7 +1017,7 @@ export default function EditorPreview({
               </div>
             )}
           </div>
-          
+
           <div className="border-t border-slate-100 pt-4 mt-auto">
             <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Shortcuts</p>
             <div className="text-[10px] text-slate-500 space-y-1.5 font-medium">
@@ -1037,45 +1032,45 @@ export default function EditorPreview({
         <main className="flex-1 overflow-y-auto px-4 md:px-8 py-8 flex flex-col items-center">
           {/* Format Control Bar floating above sheet */}
           <div className={`flex items-center gap-1 bg-white border border-slate-150 rounded-xl px-2 py-1.5 shadow-md shadow-slate-100 mb-6 sticky top-0 z-10 w-full max-w-2xl select-none ${userRole === "viewer" ? "pointer-events-none opacity-50" : ""}`}>
-            <button 
+            <button
               onClick={() => applyFormat("bold")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Bold"
             >
               <Bold className="h-4 w-4" />
             </button>
-            <button 
+            <button
               onClick={() => applyFormat("italic")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Italic"
             >
               <Italic className="h-4 w-4" />
             </button>
-            <button 
+            <button
               onClick={() => applyFormat("underline")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Underline"
             >
               <Underline className="h-4 w-4" />
             </button>
-            
+
             <div className="h-4 w-px bg-slate-200 mx-1" />
 
-            <button 
+            <button
               onClick={() => applyFormat("formatBlock", "h2")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Heading 1"
             >
               <Heading1 className="h-4 w-4" />
             </button>
-            <button 
+            <button
               onClick={() => applyFormat("formatBlock", "h3")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Heading 2"
             >
               <Heading2 className="h-4 w-4" />
             </button>
-            <button 
+            <button
               onClick={() => applyFormat("insertUnorderedList")}
               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
               title="Bulleted List"
@@ -1094,7 +1089,7 @@ export default function EditorPreview({
           </div>
 
           {/* Actual Document Sheet */}
-          <div 
+          <div
             className="w-full max-w-2xl bg-white border border-slate-100 shadow-xl rounded-2xl px-12 py-16 flex-1 min-h-[70vh] flex flex-col relative"
           >
             {/* Editor Canvas Container */}
@@ -1114,7 +1109,7 @@ export default function EditorPreview({
 
             {/* Real-time Collaborative Cursors Overlay */}
             {Object.entries(cursorCoords).map(([uid, c]) => (
-              <div 
+              <div
                 key={uid}
                 className="absolute pointer-events-none transition-all duration-100 z-10"
                 style={{
@@ -1123,12 +1118,12 @@ export default function EditorPreview({
                 }}
               >
                 {/* Caret Vertical Line */}
-                <div 
-                  className="w-0.5 h-4.5 animate-pulse" 
+                <div
+                  className="w-0.5 h-4.5 animate-pulse"
                   style={{ backgroundColor: c.color }}
                 />
                 {/* Floating Name Label */}
-                <div 
+                <div
                   className="absolute -top-4 left-0 text-[8px] font-bold px-1 py-0.5 rounded text-white whitespace-nowrap shadow-xs select-none"
                   style={{ backgroundColor: c.color }}
                 >
@@ -1156,8 +1151,8 @@ export default function EditorPreview({
             {/* Document Bottom Footer */}
             <div className="border-t border-slate-100 pt-6 mt-8 flex justify-between items-center text-[11px] text-slate-400 select-none">
               <span>
-                {collaborators.length > 0 
-                  ? `Editing with: ${collaborators.map(c => c.userName.split("@")[0]).join(", ")}` 
+                {collaborators.length > 0
+                  ? `Editing with: ${collaborators.map(c => c.userName.split("@")[0]).join(", ")}`
                   : "Private session (no other editors connected)"}
               </span>
               <span>Cloud Sync Active</span>
@@ -1167,7 +1162,7 @@ export default function EditorPreview({
 
         {/* PANEL 3: Right Collaborators & Comments */}
         <aside className="hidden lg:flex w-72 flex-col border-l border-slate-100 bg-white p-4 space-y-6 overflow-y-auto">
-          
+
           {/* Active Collaborators list */}
           <div>
             <div className="flex items-center justify-between mb-3 border-b border-slate-50 pb-2">
@@ -1184,7 +1179,7 @@ export default function EditorPreview({
                   const initials = c.userName.substring(0, 2).toUpperCase();
                   return (
                     <div key={c.userID} className="flex items-center gap-2 px-1 py-0.5">
-                      <div 
+                      <div
                         className="h-6.5 w-6.5 rounded-full text-white font-extrabold text-[9px] flex items-center justify-center select-none"
                         style={{ backgroundColor: c.color }}
                       >
@@ -1268,8 +1263,8 @@ export default function EditorPreview({
                 </div>
               ) : (
                 comments.map((c) => (
-                  <div 
-                    key={c.id} 
+                  <div
+                    key={c.id}
                     className="p-3 bg-slate-50/70 border border-slate-100 rounded-xl hover:border-slate-200 transition-colors group relative"
                   >
                     <div className="flex items-center justify-between mb-1.5">
@@ -1325,7 +1320,7 @@ function sanitizeHTML(html: string): string {
   if (typeof window === "undefined") return html;
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
-  
+
   const forbiddenTags = ["script", "iframe", "object", "embed", "applet", "meta", "link", "style"];
   forbiddenTags.forEach(tag => {
     const elements = doc.querySelectorAll(tag);
